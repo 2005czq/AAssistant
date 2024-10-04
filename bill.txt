@@ -1,0 +1,22 @@
+****************Bill****************
+
+´ŞÜÆç÷ pays for ´ò³µµ½»ğ¹øµê,
+	ÎÂ»Ûö© should pay 5.91
+	ÄßÃÎÈã should pay 5.91
+´ŞÜÆç÷ pays for Å£Èâ»ğ¹ø,
+	ÎÂ»Ûö© should pay 43.34
+	ÄßÃÎÈã should pay 43.34
+ÎÂ»Ûö© pays for Ìğµã,
+	´ŞÜÆç÷ should pay 15.00
+´ŞÜÆç÷ pays for ´ò³µ»ØÑ§Ğ£,
+	ÎÂ»Ûö© should pay 4.80
+	ÄßÃÎÈã should pay 4.80
+ÎÂ»Ûö© pays for ´ò³µµ½¸ßÌúÕ¾,
+	´ŞÜÆç÷ should pay 12.77
+
+***************Result***************
+
+ÄßÃÎÈã should transfer 54.05 to ÎÂ»Ûö©
+ÎÂ»Ûö© should transfer 80.33 to ´ŞÜÆç÷
+
+************************************
