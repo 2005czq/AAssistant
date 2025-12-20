@@ -170,6 +170,14 @@ function init() {
         }
     });
 
+    // Add member on blur (input loses focus) - needed for mobile devices
+    addMemberInput.addEventListener('blur', (e) => {
+        if (e.target.value.trim()) {
+            addMember(e.target.value);
+            e.target.value = '';
+        }
+    });
+
     addBillBtn.addEventListener('click', addNewBill);
     demoBtn.addEventListener('click', loadDemoData);
     clearBtn.addEventListener('click', showClearConfirmModal);
@@ -653,7 +661,7 @@ function generateAndDownloadImage(currentTime, billSection, settlementSection) {
             width: qrSize,
             margin: 0,
             color: { dark: '#3a3026', light: '#fdfbf7' }
-        }, function(error) {
+        }, function (error) {
             if (!error) {
                 ctx.drawImage(qrCanvas, width - padding - qrSize - 30, footerY + 20, qrSize, qrSize);
 
@@ -840,19 +848,19 @@ function loadDemoData() {
         members = ['崔芷琪', '温慧雯', '聂梦冉', '刘苏珍'];
         bills = [
             { id: 1, payer: '崔芷琪', reason: '火锅', type: 'Join', amount: 139, involved: ['崔芷琪', '温慧雯', '聂梦冉'], distribution: {}, ratios: {} },
-            { id: 2, payer: '温慧雯', reason: '甜点', type: 'Distribution', amount: 33, involved: [], distribution: {'崔芷琪': 15, '温慧雯': 18, '聂梦冉': 0, '刘苏珍': 0}, ratios: {} },
+            { id: 2, payer: '温慧雯', reason: '甜点', type: 'Distribution', amount: 33, involved: [], distribution: { '崔芷琪': 15, '温慧雯': 18, '聂梦冉': 0, '刘苏珍': 0 }, ratios: {} },
             { id: 3, payer: '聂梦冉', reason: '网约车', type: 'AA', amount: 17.72, involved: [], distribution: {}, ratios: {} },
             { id: 4, payer: '温慧雯', reason: '饮品', type: 'Remove', amount: 25.8, involved: ['聂梦冉'], distribution: {}, ratios: {} },
-            { id: 5, payer: '刘苏珍', reason: '烧烤', type: 'Ratio', amount: 200, involved: [], distribution: {}, ratios: {'崔芷琪': 1, '温慧雯': 2, '聂梦冉': 1, '刘苏珍': 1} }
+            { id: 5, payer: '刘苏珍', reason: '烧烤', type: 'Ratio', amount: 200, involved: [], distribution: {}, ratios: { '崔芷琪': 1, '温慧雯': 2, '聂梦冉': 1, '刘苏珍': 1 } }
         ];
     } else {
         members = ['Alice', 'Bob', 'Charlie', 'David'];
         bills = [
             { id: 1, payer: 'Alice', reason: 'Hotpot', type: 'Join', amount: 139, involved: ['Alice', 'Bob', 'Charlie'], distribution: {}, ratios: {} },
-            { id: 2, payer: 'Bob', reason: 'Dessert', type: 'Distribution', amount: 33, involved: [], distribution: {'Alice': 15, 'Bob': 18, 'Charlie': 0, 'David': 0}, ratios: {} },
+            { id: 2, payer: 'Bob', reason: 'Dessert', type: 'Distribution', amount: 33, involved: [], distribution: { 'Alice': 15, 'Bob': 18, 'Charlie': 0, 'David': 0 }, ratios: {} },
             { id: 3, payer: 'Charlie', reason: 'Taxi', type: 'AA', amount: 17.72, involved: [], distribution: {}, ratios: {} },
             { id: 4, payer: 'Bob', reason: 'Drinks', type: 'Remove', amount: 25.8, involved: ['Charlie'], distribution: {}, ratios: {} },
-            { id: 5, payer: 'David', reason: 'Barbecue', type: 'Ratio', amount: 200, involved: [], distribution: {}, ratios: {'Alice': 1, 'Bob': 2, 'Charlie': 1, 'David': 1} }
+            { id: 5, payer: 'David', reason: 'Barbecue', type: 'Ratio', amount: 200, involved: [], distribution: {}, ratios: { 'Alice': 1, 'Bob': 2, 'Charlie': 1, 'David': 1 } }
         ];
     }
     renderMembers();
@@ -1427,7 +1435,7 @@ function renderNewBillRow() {
     // Replace payer select with custom dropdown
     const payerCell = newBillRow.querySelector('.cell:nth-child(1)');
     payerCell.innerHTML = '';
-    const payerDropdown = createCustomDropdown(members, '', () => {}, 'new-payer-dropdown');
+    const payerDropdown = createCustomDropdown(members, '', () => { }, 'new-payer-dropdown');
     payerCell.appendChild(payerDropdown);
 
     // Replace type select with custom dropdown (NO empty option)
@@ -1634,27 +1642,27 @@ function setupListDnD(containerId, onReorder) {
         // Determine new order based on DOM
         const newOrder = [];
         if (containerId === 'member-list-container') {
-             Array.from(container.children).forEach(child => {
-                 if (child.id === 'add-member-input') return;
-                 const name = child.querySelector('.member-name')?.textContent; // Assuming text content
-                 // Actually we used input value in one version, but let's check
-                 // In renderMembers we use <span class="member-name">${member}</span>
-                 if (name) newOrder.push(name);
-             });
-             // Update members based on this new order
-             members.splice(0, members.length, ...newOrder);
-             saveToStorage();
-             // renderAll(); // Already rendered by drag? No, need to sync
+            Array.from(container.children).forEach(child => {
+                if (child.id === 'add-member-input') return;
+                const name = child.querySelector('.member-name')?.textContent; // Assuming text content
+                // Actually we used input value in one version, but let's check
+                // In renderMembers we use <span class="member-name">${member}</span>
+                if (name) newOrder.push(name);
+            });
+            // Update members based on this new order
+            members.splice(0, members.length, ...newOrder);
+            saveToStorage();
+            // renderAll(); // Already rendered by drag? No, need to sync
         } else if (containerId === 'bill-list') {
-             Array.from(container.children).forEach(child => {
-                 if (child.id === 'new-bill-row') return;
-                 const id = parseInt(child.dataset.id);
-                 const bill = bills.find(b => b.id === id);
-                 if (bill) newOrder.push(bill);
-             });
-             bills.splice(0, bills.length, ...newOrder);
-             saveToStorage();
-             // renderBillList();
+            Array.from(container.children).forEach(child => {
+                if (child.id === 'new-bill-row') return;
+                const id = parseInt(child.dataset.id);
+                const bill = bills.find(b => b.id === id);
+                if (bill) newOrder.push(bill);
+            });
+            bills.splice(0, bills.length, ...newOrder);
+            saveToStorage();
+            // renderBillList();
         }
 
         draggedItem = null;
@@ -1671,8 +1679,8 @@ function setupListDnD(containerId, onReorder) {
             if (containerId === 'member-list-container') {
                 container.insertBefore(draggable, document.getElementById('add-member-input'));
             } else if (containerId === 'bill-list') {
-                 container.insertBefore(draggable, document.getElementById('new-bill-row'));
-                 // Only if new-bill-row is actually in the list (it is)
+                container.insertBefore(draggable, document.getElementById('new-bill-row'));
+                // Only if new-bill-row is actually in the list (it is)
             } else {
                 container.appendChild(draggable);
             }
