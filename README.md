@@ -32,6 +32,7 @@ AAssistant is a bill splitter application that helps groups calculate fair cost 
   - Copy bill details as text
   - Download as image
 - **🌓 Theme Detection**: Automatically matches system theme preference
+- **⚡ Modern Stack**: Svelte + TypeScript + Vite, ready for GitHub Pages
 
 ### C++ Version
 
@@ -54,6 +55,32 @@ See [./cpp/README.md](./cpp/README.md) for more details.
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
+
+## 🛠️ Development (Svelte + TypeScript)
+
+This project has been refactored to Svelte + TypeScript with Vite. Use `pnpm` to install and run.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Type checks:
+
+```bash
+pnpm check
+```
+
+Build for production:
+
+```bash
+pnpm build
+```
+
+Deploy to GitHub Pages:
+
+1. Run `pnpm build` to generate the static site in `dist`.
+2. Publish the `dist` folder via GitHub Pages (or any static host).
 
 ## 📄 License
 

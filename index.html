@@ -1,126 +1,16 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AAssistant - Bill Splitter</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
-</head>
-
-<body>
-    <div class="paper">
-        <header>
-            <div class="header-left">
-                <h1>AAssistant</h1>
-                <button id="github-btn" class="btn-icon" aria-label="GitHub">
-                    <i class="fab fa-github"></i>
-                </button>
-                <button id="lang-toggle" class="btn-icon" aria-label="Switch Language">
-                    <span class="lang-text">中</span>
-                </button>
-                <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme">
-                    <!-- Hand-drawn moon icon -->
-                    <svg class="icon-moon" viewBox="0 0 24 24">
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-                    </svg>
-                    <!-- Hand-drawn sun icon (hidden by default) -->
-                    <svg class="icon-sun hidden" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="5" />
-                        <line x1="12" y1="1" x2="12" y2="3" />
-                        <line x1="12" y1="21" x2="12" y2="23" />
-                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                        <line x1="1" y1="12" x2="3" y2="12" />
-                        <line x1="21" y1="12" x2="23" y2="12" />
-                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-                    </svg>
-                </button>
-            </div>
-            <div class="header-right">
-                <button id="demo-btn" data-i18n="demo">Demo</button>
-                <button id="edit-btn" data-i18n="edit">Edit</button>
-                <button id="clear-btn" class="btn-danger" data-i18n="clear">Clear</button>
-            </div>
-        </header>
-
-        <main>
-            <!-- Section 1: Members (Always Editable) -->
-            <section id="section-members" class="notebook-section">
-                <div class="section-header">
-                    <h2 data-i18n="members_title">Members</h2>
-                </div>
-                <div class="member-list-container" id="member-list-container">
-                    <input type="text" id="add-member-input" class="member-chip" placeholder="+ Add">
-                </div>
-            </section>
-
-            <!-- Section 2: Bills (Editable List) -->
-            <section id="section-bills" class="notebook-section">
-                <div class="section-header">
-                    <h2 data-i18n="bills_title">Bills</h2>
-                </div>
-
-                <div class="bill-list-headers bill-list-header">
-                    <span data-i18n="payer">Payer</span>
-                    <span data-i18n="reason">Reason</span>
-                    <span data-i18n="type">Type</span>
-                    <span data-i18n="amount">Amount</span>
-                    <span></span>
-                </div>
-
-                <div id="bill-list"></div>
-
-                <!-- Add New Bill Row -->
-                <div class="bill-row new-bill-row" id="new-bill-row">
-                    <div class="cell" data-i18n-label="payer">
-                        <!-- Payer dropdown created by JS -->
-                    </div>
-                    <div class="cell" data-i18n-label="reason">
-                        <input type="text" id="new-reason" placeholder="Reason">
-                    </div>
-                    <div class="cell" data-i18n-label="type">
-                        <!-- Type dropdown created by JS -->
-                    </div>
-                    <div class="cell" data-i18n-label="amount">
-                        <input type="number" id="new-amount" step="0.01" min="0" placeholder="0.00">
-                    </div>
-                    <div class="cell">
-                        <button id="add-bill-btn" data-i18n="add">+</button>
-                    </div>
-
-                    <div id="new-bill-details" class="bill-details-row hidden">
-                        <div id="new-bill-members" class="checkbox-grid hidden"></div>
-                        <div id="new-bill-dist" class="details-grid hidden"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Section 3: Result -->
-            <section id="section-result" class="notebook-section">
-                <div class="result-header">
-                    <h2 data-i18n="result_title">Settlement</h2>
-                    <button id="details-btn" data-i18n="details">Details</button>
-                </div>
-                <div id="result-container" class="result-container"></div>
-            </section>
-        </main>
-    </div>
-
-    <!-- Custom Modal -->
-    <div id="modal-overlay" class="modal-overlay">
-        <div id="modal-content" class="modal-content">
-            <h2 id="modal-title"></h2>
-            <div id="modal-body" class="modal-body"></div>
-            <div id="modal-actions" class="modal-actions"></div>
-        </div>
-    </div>
-
-    <!-- QR Code Library -->
-    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
-    <script src="script.js"></script>
-</body>
-
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

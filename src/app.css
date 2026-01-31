@@ -1,6 +1,6 @@
 @font-face {
     font-family: 'CustomHandwriting';
-    src: url('fonts.ttf') format('truetype');
+    src: url('./assets/fonts.ttf') format('truetype');
     font-weight: normal;
     font-style: normal;
 }
@@ -650,6 +650,9 @@ input[type=number] {
     width: 30px;
     height: 100%;
     flex-shrink: 0;
+    background: transparent;
+    border: none;
+    padding: 0;
 }
 .drag-handle:active {
     cursor: grabbing;
@@ -670,6 +673,11 @@ input[type=number] {
 }
 .bill-row {
     transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.actions-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 
