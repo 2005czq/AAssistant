@@ -79,7 +79,7 @@ export async function generateAndDownloadImage(
     });
   }
 
-  context.font = '18px "CustomHandwriting", cursive, sans-serif';
+  context.font = '18px "Yozai Font", cursive, sans-serif';
   let totalHeight = padding;
   const wrappedLines: WrappedItem[] = [];
 
@@ -91,7 +91,7 @@ export async function generateAndDownloadImage(
     } else if (item.type === 'title') {
       wrappedLines.push({ lines: [item.text], type: 'title', lineHeight: titleLineHeight });
     } else {
-      const font = '18px "CustomHandwriting", cursive, sans-serif';
+      const font = '18px "Yozai Font", cursive, sans-serif';
       let indent = '';
       if (item.type === 'bullet-bill') {
         indent = '      ';
@@ -137,12 +137,12 @@ export async function generateAndDownloadImage(
   wrappedLines.forEach((item) => {
     item.lines.forEach((line) => {
       if (item.type === 'time') {
-        context.font = '16px "CustomHandwriting", cursive, sans-serif';
+        context.font = '16px "Yozai Font", cursive, sans-serif';
         context.fillStyle = '#888';
         context.fillText(line, padding, y);
         context.fillStyle = '#3a3026';
       } else if (item.type === 'title') {
-        context.font = 'bold 20px "CustomHandwriting", cursive, sans-serif';
+        context.font = 'bold 20px "Yozai Font", cursive, sans-serif';
         context.fillStyle = '#3a3026';
         context.fillText(line, padding, y);
         context.beginPath();
@@ -155,7 +155,7 @@ export async function generateAndDownloadImage(
       } else if (item.type === 'gap') {
         // skip
       } else {
-        context.font = '18px "CustomHandwriting", cursive, sans-serif';
+        context.font = '18px "Yozai Font", cursive, sans-serif';
         context.fillStyle = '#3a3026';
         context.fillText(line, padding, y);
       }
@@ -172,7 +172,7 @@ export async function generateAndDownloadImage(
   context.lineTo(width - padding, footerY);
   context.stroke();
 
-  context.font = '14px "CustomHandwriting", cursive, sans-serif';
+  context.font = '14px "Yozai Font", cursive, sans-serif';
   context.fillStyle = '#666';
   context.fillText(footer, padding, footerY + 30);
 
@@ -186,7 +186,7 @@ export async function generateAndDownloadImage(
 
     context.drawImage(qrCanvas, width - padding - qrSize - 30, footerY + 20, qrSize, qrSize);
 
-    context.font = '12px "CustomHandwriting", cursive, sans-serif';
+    context.font = '12px "Yozai Font", cursive, sans-serif';
     context.fillStyle = '#888';
     context.textAlign = 'center';
     const qrCenterX = width - padding - qrSize - 30 + qrSize / 2;

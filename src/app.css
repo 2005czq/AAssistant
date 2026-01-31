@@ -1,6 +1,7 @@
 @font-face {
-    font-family: 'CustomHandwriting';
-    src: url('./assets/fonts.ttf') format('truetype');
+    font-family: 'Yozai Font';
+    src: url('https://cdn.jsdelivr.net/gh/2005czq/AAssistant@main/src/assets/fonts.woff2') format('woff2'),
+         url('https://cdn.jsdelivr.net/gh/2005czq/AAssistant@main/src/assets/fonts.ttf') format('truetype');
     font-weight: normal;
     font-style: normal;
 }
@@ -15,7 +16,7 @@
     --danger-color: #c0392b;
     --success-color: #27ae60;
     --shadow: 2px 2px 8px rgba(0,0,0,0.12);
-    --font-main: 'CustomHandwriting', cursive, sans-serif;
+    --font-main: 'Yozai Font', cursive, sans-serif;
     --divider-color: #a08060;
     --icon-color: #3a3026;
     --border-thin: 1px;
