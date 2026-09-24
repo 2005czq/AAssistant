@@ -50,13 +50,21 @@
     confirmationHold = null;
   }
 
+  let editModeHold: (() => void) | null = null;
+
   function toggleEditMode() {
-    isEditMode = !isEditMode;
-    if (!isEditMode) closeUserEditing();
+    if (isEditMode) {
+      closeUserEditing();
+    } else {
+      editModeHold = holdUI();
+      isEditMode = true;
+    }
   }
 
   function closeUserEditing() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    editModeHold?.();
+    editModeHold = null;
     isEditMode = false;
     closeConfirmation();
   }
