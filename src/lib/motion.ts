@@ -4,12 +4,11 @@ export const MOTION = { fade: 120, reveal: 160, layout: 240, reorder: 320, ink: 
 const easing = 'cubic-bezier(.22,.68,0,1)';
 export const reorderEasing = 'cubic-bezier(.34,1.56,.64,1)';
 
-const preferenceKey = 'aassistant_animations';
-function readPreference(): boolean {
-  try { return localStorage.getItem(preferenceKey) !== 'false'; } catch { return true; }
+export const animationsEnabled = writable(true);
+export function setAnimationsEnabled(value: boolean): void {
+  animationsEnabled.set(value);
 }
 
-export const animationsEnabled = writable(readPreference());
 const media = matchMedia('(prefers-reduced-motion: reduce)');
 const reduced = writable(media.matches);
 const onMediaChange = () => reduced.set(media.matches);
@@ -18,9 +17,6 @@ export const motionEnabled = derived([animationsEnabled, reduced], ([enabled, re
 
 let enabled = true;
 const finishers = new Set<() => void>();
-const unsubscribePreference = animationsEnabled.subscribe((value) => {
-  try { localStorage.setItem(preferenceKey, String(value)); } catch { /* The switch also works without storage. */ }
-});
 const unsubscribeMotion = motionEnabled.subscribe((value) => {
   enabled = value;
   document.documentElement.dataset.motion = value ? 'on' : 'off';
@@ -35,7 +31,6 @@ const unsubscribeMotion = motionEnabled.subscribe((value) => {
 
 if (import.meta.hot) import.meta.hot.dispose(() => {
   media.removeEventListener('change', onMediaChange);
-  unsubscribePreference();
   unsubscribeMotion();
   for (const finish of [...finishers]) finish();
 });

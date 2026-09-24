@@ -4,7 +4,7 @@ import { checkKeys, object, parseLedger } from './ledger';
 export const STORAGE_KEY = 'aassistant_data';
 export const PREFERENCES_KEY = 'aassistant_preferences';
 const STORAGE_VERSION = 3;
-type Preferences = Pick<AppState, 'currentLang' | 'currentTheme'>;
+type Preferences = Pick<AppState, 'currentLang' | 'currentTheme' | 'animations'>;
 
 export function saveLedger({ name, members, bills }: Ledger): boolean {
   try {
@@ -29,9 +29,9 @@ export function loadLedger(): { ledger: Ledger | null; failed: boolean } {
   }
 }
 
-export function savePreferences({ currentLang, currentTheme }: Preferences): boolean {
+export function savePreferences({ currentLang, currentTheme, animations }: Preferences): boolean {
   try {
-    localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ currentLang, currentTheme }));
+    localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ currentLang, currentTheme, animations }));
     return true;
   } catch {
     return false;
@@ -43,11 +43,16 @@ export function loadPreferences(): { preferences: Preferences | null; failed: bo
     const raw = localStorage.getItem(PREFERENCES_KEY);
     if (raw === null) return { preferences: null, failed: false };
     const data = object(JSON.parse(raw), 'preferences');
-    checkKeys(data, ['currentLang', 'currentTheme'], 'preferences');
+    checkKeys(data, ['currentLang', 'currentTheme', 'animations'], 'preferences');
     if (!['en', 'zh'].includes(data.currentLang as string) || !['light', 'dark'].includes(data.currentTheme as string)) {
       throw new Error('Invalid saved preferences');
     }
-    const preferences = { currentLang: data.currentLang as AppState['currentLang'], currentTheme: data.currentTheme as AppState['currentTheme'] };
+    const animations = typeof data.animations === 'boolean' ? data.animations : true;
+    const preferences: Preferences = {
+      currentLang: data.currentLang as AppState['currentLang'],
+      currentTheme: data.currentTheme as AppState['currentTheme'],
+      animations
+    };
     return { preferences, failed: false };
   } catch {
     return { preferences: null, failed: true };

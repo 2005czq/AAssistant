@@ -9,6 +9,7 @@ import { InputError, billId, checkKeys, invalid, ledgerIssues, memberName, objec
 import { loadLedger, loadPreferences, saveLedger, savePreferences, PREFERENCES_KEY, STORAGE_KEY } from './storage';
 import { detectSystemLanguage, detectSystemTheme, getCurrentTimeFormatted } from './utils';
 import { t } from './i18n';
+import { setAnimationsEnabled } from './motion';
 
 type MutationResult = ApiResult<MutationReceipt>;
 type LedgerView = LedgerSnapshot & {
@@ -16,7 +17,7 @@ type LedgerView = LedgerSnapshot & {
 };
 type Notice = 'editing_busy' | 'storage_restore_failed' | 'storage_save_failed' | 'preferences_unavailable';
 
-let data: AppState = { name: '', members: [], bills: [], currentLang: 'en', currentTheme: 'light' };
+let data: AppState = { name: '', members: [], bills: [], currentLang: 'en', currentTheme: 'light', animations: true };
 let localUIHolds = 0;
 let nextId = 1;
 let generation = 0;
@@ -88,10 +89,11 @@ function readSavedLedger() {
 function readSavedPreferences() {
   if (!preferencesPersisted) return;
   const stored = loadPreferences();
-  const next = stored.preferences ?? { currentLang: detectSystemLanguage(), currentTheme: detectSystemTheme() };
-  if (next.currentLang === data.currentLang && next.currentTheme === data.currentTheme && !stored.failed) return;
+  const next = stored.preferences ?? { currentLang: detectSystemLanguage(), currentTheme: detectSystemTheme(), animations: true };
+  if (next.currentLang === data.currentLang && next.currentTheme === data.currentTheme && next.animations === data.animations && !stored.failed) return;
   preferencesPersisted = !stored.failed;
   data = { ...data, ...next };
+  setAnimationsEnabled(data.animations);
   report = null;
   publish();
   if (stored.failed) showNotice('preferences_unavailable');
@@ -349,16 +351,23 @@ export const aassistant = Object.freeze({
     return change(input ?? {}, [], () => ({ ...data, ...getDemoData(data.currentLang) }), 'reset');
   },
 
-  setPreferences(input: { currentLang?: Lang; currentTheme?: Theme }): MutationResult {
+  getPreferences(): { currentLang: Lang; currentTheme: Theme; animations: boolean } {
+    return { currentLang: data.currentLang, currentTheme: data.currentTheme, animations: data.animations };
+  },
+
+  setPreferences(input: { currentLang?: Lang; currentTheme?: Theme; animations?: boolean }): MutationResult {
     try {
-      const value = request(input, ['currentLang', 'currentTheme']);
+      const value = request(input, ['currentLang', 'currentTheme', 'animations']);
       if (value.currentLang !== undefined && value.currentLang !== 'en' && value.currentLang !== 'zh') invalid('currentLang', 'language');
       if (value.currentTheme !== undefined && value.currentTheme !== 'light' && value.currentTheme !== 'dark') invalid('currentTheme', 'theme');
+      if (value.animations !== undefined && typeof value.animations !== 'boolean') invalid('animations', 'animations');
       const currentLang = (value.currentLang ?? data.currentLang) as Lang;
       const currentTheme = (value.currentTheme ?? data.currentTheme) as Theme;
-      const changed = currentLang !== data.currentLang || currentTheme !== data.currentTheme;
+      const animations = (value.animations ?? data.animations) as boolean;
+      const changed = currentLang !== data.currentLang || currentTheme !== data.currentTheme || animations !== data.animations;
       if (changed) {
-        data = { ...data, currentLang, currentTheme };
+        data = { ...data, currentLang, currentTheme, animations };
+        setAnimationsEnabled(animations);
         report = null;
       }
       if (changed || !preferencesPersisted) {

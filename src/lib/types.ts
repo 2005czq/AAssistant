@@ -38,6 +38,7 @@ export interface Ledger {
 export interface AppState extends Ledger {
   currentLang: Lang;
   currentTheme: Theme;
+  animations: boolean;
 }
 
 export type MemberChange = { type: 'add' | 'remove' | 'move' | 'reset' }
@@ -54,7 +55,7 @@ export interface LedgerIssue {
 export type ValidationCode = 'object' | 'array' | 'string' | 'unknown_field'
   | 'member_name' | 'member_duplicate' | 'member_exists' | 'number' | 'bill_id' | 'duplicate_bill_id'
   | 'split_type' | 'payer' | 'reason_length' | 'involved' | 'involved_duplicate'
-  | 'bill_id_assigned' | 'bill_id_exhausted' | 'language' | 'theme';
+  | 'bill_id_assigned' | 'bill_id_exhausted' | 'language' | 'theme' | 'animations';
 
 export interface LedgerSnapshot extends AppState {
   persisted: boolean;

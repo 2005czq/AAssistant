@@ -6,15 +6,16 @@
   import BookOpen from 'lucide-svelte/icons/book-open';
   import CirclePlay from 'lucide-svelte/icons/circle-play';
   import CirclePause from 'lucide-svelte/icons/circle-pause';
-  import { animationsEnabled } from '../lib/motion';
   import type { Lang, Theme } from '../lib/types';
   import { t } from '../lib/i18n';
   import { GITHUB_URL } from '../lib/constants';
 
   export let lang: Lang;
   export let theme: Theme;
+  export let animations: boolean;
   export let onToggleLang: () => void;
   export let onToggleTheme: () => void;
+  export let onToggleAnimations: () => void;
   export let onDemo: () => void;
 </script>
 
@@ -32,10 +33,10 @@
       <Button id="theme-toggle" class="btn-icon" aria-label={t(lang, 'toggle_theme')} title={t(lang, 'toggle_theme')} on:click={onToggleTheme}>
         {#if theme === 'dark'}<Sun aria-hidden="true" />{:else}<Moon aria-hidden="true" />{/if}
       </Button>
-      <Button id="animation-toggle" class="btn-icon" aria-label={t(lang, $animationsEnabled ? 'disable_animations' : 'enable_animations')}
-        title={t(lang, $animationsEnabled ? 'disable_animations' : 'enable_animations')} aria-pressed={$animationsEnabled}
-        on:click={() => animationsEnabled.update((enabled) => !enabled)}>
-        {#if $animationsEnabled}<CirclePause size={20} aria-hidden="true" />{:else}<CirclePlay size={20} aria-hidden="true" />{/if}
+      <Button id="animation-toggle" class="btn-icon" aria-label={t(lang, animations ? 'disable_animations' : 'enable_animations')}
+        title={t(lang, animations ? 'disable_animations' : 'enable_animations')} aria-pressed={animations}
+        on:click={onToggleAnimations}>
+        {#if animations}<CirclePause size={20} aria-hidden="true" />{:else}<CirclePlay size={20} aria-hidden="true" />{/if}
       </Button>
     </div>
   <div class="header-actions" role="group" aria-label={t(lang, 'ledger_tools')}>

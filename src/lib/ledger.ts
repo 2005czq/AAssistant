@@ -31,7 +31,8 @@ export function invalid(field: string, code: ValidationCode, params: Record<stri
     bill_id_assigned: 'Omit the bill ID when adding a bill; the app assigns it',
     bill_id_exhausted: 'No further bill IDs are available',
     language: 'Use en or zh for the language',
-    theme: 'Use light or dark for the theme'
+    theme: 'Use light or dark for the theme',
+    animations: 'Animations must be a boolean'
   };
   const message = `${messages[code]}.`;
   throw new InputError({ code: 'INVALID_ARGUMENT', message, issues: [{ field, message, code, params }] });

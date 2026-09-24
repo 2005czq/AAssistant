@@ -93,12 +93,16 @@
   <Header
     lang={$appState.currentLang}
     theme={$appState.currentTheme}
+    animations={$appState.animations}
     onDemo={() => requestAction('demo')}
     onToggleLang={() => aassistant.setPreferences({
       currentLang: $appState.currentLang === 'en' ? 'zh' : 'en'
     })}
     onToggleTheme={() => aassistant.setPreferences({
       currentTheme: $appState.currentTheme === 'light' ? 'dark' : 'light'
+    })}
+    onToggleAnimations={() => aassistant.setPreferences({
+      animations: !$appState.animations
     })}
   />
 
