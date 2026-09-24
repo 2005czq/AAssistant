@@ -63,7 +63,6 @@ const i18n = {
     reason_involved: 'Select members and include someone other than the payer in the split',
     reason_distribution: 'Give someone other than the payer a positive amount',
     reason_ratios: 'Give someone other than the payer a positive share',
-    amount_overflow: 'The total amount is too large to calculate accurately; please reduce the amounts',
 
     // Storage and editing notices
     editing_busy: 'Another editor is using this bill. Try again after they finish.',
@@ -152,7 +151,6 @@ const i18n = {
     reason_involved: '请选择成员，并确保付款人以外有人参与分摊',
     reason_distribution: '付款人以外至少一人的分摊金额须大于 0',
     reason_ratios: '付款人以外至少一人的比例须大于 0',
-    amount_overflow: '总金额过大，无法精确计算，请减小金额',
 
     // Storage and editing notices
     editing_busy: '其他编辑者正在使用此账本，请在对方结束后重试。',

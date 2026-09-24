@@ -26,7 +26,7 @@ export interface Transfer {
 
 export interface Settlement {
   transfers: Transfer[];
-  error: 'invalid' | 'amount_overflow' | null;
+  error: 'invalid' | null;
 }
 
 export interface Ledger {
@@ -70,7 +70,7 @@ export type BillInput = Pick<Bill, 'payer' | 'reason'> & (
 
 export interface ApiError {
   code: 'INVALID_ARGUMENT' | 'NOT_FOUND' | 'INVALID_LEDGER'
-    | 'EMPTY_LEDGER' | 'MEMBER_LIMIT' | 'AMOUNT_OVERFLOW' | 'EXPORT_FAILED'
+    | 'EMPTY_LEDGER' | 'MEMBER_LIMIT' | 'EXPORT_FAILED'
     | 'EDIT_BUSY' | 'EDIT_REQUIRED' | 'SAVE_FAILED';
   message: string;
   issues?: LedgerIssue[];

@@ -90,8 +90,7 @@
   $: report = result.ok ? result : null;
   $: copied = copyStatus === 'copied' && report?.text === copiedText;
   $: message = result.ok ? ''
-    : result.error.code === 'INVALID_LEDGER' || result.error.code === 'EMPTY_LEDGER' ? t(lang, 'error_fix_first')
-    : result.error.code === 'AMOUNT_OVERFLOW' ? t(lang, 'amount_overflow') : '';
+    : result.error.code === 'INVALID_LEDGER' || result.error.code === 'EMPTY_LEDGER' ? t(lang, 'error_fix_first') : '';
   $: reason = !result.ok ? ledgerErrorReason(lang, result.error) : '';
 
   function ledgerErrorReason(lang: Lang, error: ApiError): string {

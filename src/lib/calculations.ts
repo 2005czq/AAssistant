@@ -88,10 +88,7 @@ export function calculateSettlement(members: string[], bills: Bill[]): Settlemen
   }
 
   const balances = members.map(() => 0);
-  let total = 0;
   for (const bill of bills) {
-    total += toCents(bill.amount);
-    if (!Number.isSafeInteger(total)) return { transfers: [], error: 'amount_overflow' };
     const shares = calculateBillShares(bill, members);
     balances[members.indexOf(bill.payer)] += toCents(bill.amount);
     shares.forEach((share, index) => { balances[index] -= share; });

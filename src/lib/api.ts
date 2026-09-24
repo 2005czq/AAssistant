@@ -323,11 +323,6 @@ function getText(): ApiResult<TextReport> {
   try {
     if (issues.length) throw new InputError({ code: 'INVALID_LEDGER', message: 'Complete the ledger before exporting.', issues: structuredClone(issues) });
     if (!data.bills.length) throw new InputError({ code: 'EMPTY_LEDGER', message: 'Add a bill before exporting.' });
-    if (settlement.error === 'amount_overflow') {
-      throw new InputError({
-        code: 'AMOUNT_OVERFLOW', message: 'The total amount exceeds the supported range.'
-      });
-    }
     if (!report) {
       const now = new Date();
       const currentTime = getCurrentTimeFormatted(now);
