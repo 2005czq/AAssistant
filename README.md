@@ -1,99 +1,26 @@
 # AAssistant
 
-> A powerful bill splitting tool to help you and your friends settle expenses fairly.
+[Demo](https://2005czq.github.io/AAssistant) | English · [简体中文](./README.zh-CN.md) | [SKILL.md](./public/SKILL.md)
 
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://2005czq.github.io/AAssistant)
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/2005czq/AAssistant)
+An agent-friendly online bill splitter that automatically calculates settlements with the fewest transfers.
 
-## 📖 Overview
+- Supports multiple splitting methods, each person sends and receives at most once.
+- Automatic local saving, text copying, and PNG export.
 
-AAssistant is a bill splitter application that helps groups calculate fair cost distribution and settle debts efficiently. Originally developed as a C++ command-line tool, it has evolved into a modern, responsive web application with a beautiful handwritten notebook aesthetic.
+## Development
 
-## ✨ Features
-
-### Web Version (Current)
-
-- **🎨 Beautiful UI**: Handwritten notebook-style interface with light/dark themes
-- **📱 Fully Responsive**: Works perfectly on desktop, tablet, and mobile devices
-- **🌍 Bilingual**: Automatic language detection (English/Chinese) with manual toggle
-- **💼 Multiple Split Types**:
-  - Split Equally: Distribute cost equally among all members
-  - Only Selected: Include only selected members
-  - Except Selected: Exclude specific members
-  - By Shares: Split by ratio/percentage
-  - By Amount: Specify exact amounts for each person
-- **🎬 Interactive Interface**:
-  - Drag-and-drop bill reordering
-  - Real-time calculations
-  - Visual error feedback with red circles
-  - Edit mode for batch deletion
-- **💾 Auto-Save**: Local storage persistence
-- **📤 Export Options**:
-  - Copy bill details as text
-  - Download as image
-- **🌓 Theme Detection**: Automatically matches system theme preference
-- **⚡ Modern Stack**: Svelte + TypeScript + Vite, ready for GitHub Pages
-
-### C++ Version
-
-See [./cpp/README.md](./cpp/README.md) for more details.
-
-## 🔍 Comparison
-
-| Feature | Web Version | C++ Version |
-|---------|-------------|-------------|
-| Interface | Modern GUI | Command-line |
-| Platform | Any browser | Compiled binary |
-| Input | Interactive | Text file |
-| Persistence | Auto-save | Manual |
-| Export | Text/Image | Text only |
-| Real-time | ✅ | ❌ |
-| Mobile Support | ✅ | ❌ |
-| Ratio Split | ✅ | ❌ |
-| Drag Reorder | ✅ | ❌ |
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
-
-## 🛠️ Development (Svelte + TypeScript)
-
-This project has been refactored to Svelte + TypeScript with Vite. Use `pnpm` to install and run.
+Requires Node.js 18+ and pnpm 9+.
 
 ```bash
 pnpm install
 pnpm dev
-```
-
-Type checks:
-
-```bash
 pnpm check
-```
-
-Build for production:
-
-```bash
+pnpm fonts:split  # Pre-generate font subsets
 pnpm build
 ```
 
-Deploy to GitHub Pages:
+Deploy `dist/` to any static host. This repository uses GitHub Actions to deploy to [GitHub Pages](https://2005czq.github.io/AAssistant).
 
-1. Run `pnpm build` to generate the static site in `dist`.
-2. Publish the `dist` folder via GitHub Pages (or any static host).
+## License
 
-## 📄 License
-
-See the `LICENSE` file for details.
-
-## 🙏 Acknowledgments
-
-- Handwriting font: [Yozai Font](https://github.com/lxgw/yozai-font)
-
-## 📮 Contact
-
-For questions or suggestions, please open an issue on GitHub.
-
----
-
-**Made with ❤️ by AAssistant**
+[MIT](./LICENSE) · [Yozai (OFL-1.1)](./public/fonts-OFL.txt) · [Lucide (ISC)](https://lucide.dev/)
