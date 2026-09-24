@@ -1,8 +1,9 @@
-import type { Bill, Lang } from './types';
+import type { Lang, Ledger } from './types';
 
-export function getDemoData(lang: Lang): { members: string[]; bills: Bill[] } {
+export function getDemoData(lang: Lang): Ledger {
   if (lang === 'zh') {
     return {
+      name: '周末聚餐',
       members: ['崔芷琪', '温慧雯', '聂梦冉', '刘苏珍'],
       bills: [
         {
@@ -60,6 +61,7 @@ export function getDemoData(lang: Lang): { members: string[]; bills: Bill[] } {
   }
 
   return {
+    name: 'Weekend Get-Together',
     members: ['Alice', 'Bob', 'Charlie', 'David'],
     bills: [
       {
