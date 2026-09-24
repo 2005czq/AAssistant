@@ -32,7 +32,7 @@ const download = await api.downloadImage(); // { ok: true, fileName: 'bill-detai
 
 All mutations execute as atomic operations and return `{ ok: boolean, issues?, error? }`:
 - `ok: true`: change committed and saved. If `issues` is nonempty, the ledger has incomplete items (e.g. fewer than 2 members) and cannot be exported yet.
-- `ok: false`: check `error.code`. If `EDIT_BUSY`, the user is currently typing in an input or dragging; wait briefly and retry.
+- `ok: false`: check `error.code`. If `EDIT_BUSY`, the user is currently interacting (e.g. typing in an input, in edit mode, or dragging); wait briefly and retry.
 
 ```javascript
 // Example workflow
@@ -52,7 +52,7 @@ console.log('Created bill ID:', res.billId);
 | **Members** | `api.addMember({ name })`<br>`api.renameMember({ name, newName })`<br>`api.removeMember({ name })`<br>`api.moveMember({ name, beforeName })` (set `beforeName: null` to append) |
 | **Bills** | `api.addBill({ bill })` (returns `billId`; do not specify `id` in bill)<br>`api.updateBill({ id, changes })`<br>`api.removeBill({ id })`<br>`api.moveBill({ id, beforeId })` (set `beforeId: null` to append) |
 | **Ledger** | `api.renameLedger({ name })`<br>`api.setLedger({ name, members, bills })`<br>`api.clearLedger()`<br>`api.loadDemo()` |
-| **Preferences** | `api.setPreferences({ currentLang?: 'en'\|'zh', currentTheme?: 'light'\|'dark' })` |
+| **Preferences** | `api.setPreferences({ currentLang?: 'en'\|'zh', currentTheme?: 'light'\|'dark', animations?: boolean })`<br>`api.getPreferences()` |
 
 ---
 
