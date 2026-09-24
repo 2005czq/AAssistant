@@ -1,207 +1,140 @@
-import QRCode from 'qrcode';
-import { DEMO_URL } from './constants';
+import ReceiptText from 'lucide-svelte/icons/receipt-text';
+import HandCoins from 'lucide-svelte/icons/hand-coins';
+import { PALETTES } from './theme';
+import { REPORT_STYLE } from './report';
 import { t } from './i18n';
-import type { Lang } from './types';
+import { createHeart, drawHeart } from './heart';
+import { graphemes } from './utils';
+import type { TextReport } from './types';
 
-interface LineItem {
-  text: string;
-  type: 'time' | 'gap' | 'title' | 'normal' | 'bullet-bill' | 'bullet-settle';
-}
-
-interface WrappedItem {
-  lines: string[];
-  type: LineItem['type'];
-  lineHeight: number;
-}
-
-export async function generateAndDownloadImage(
-  lang: Lang,
-  currentTime: string,
-  billSection: string,
-  settlementSection: string
-): Promise<void> {
+export async function generateAndDownloadImage(report: TextReport): Promise<void> {
+  // Canvas text can include characters whose subsets have not appeared in the UI.
+  await document.fonts.load(REPORT_STYLE.font, `${report.text}\n${t(report.lang, 'footer_made_with')}`)
+    .catch(() => { /* A failed web font can still export using the configured fallback. */ });
+  await document.fonts.ready;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) throw new Error('Canvas is unavailable');
   const context = ctx;
+  const palette = PALETTES[report.theme];
+  const { padding, lineHeight, scale, width, columnPadding } = REPORT_STYLE;
+  const innerWidth = width - padding * 2;
+  const dividerX = padding + innerWidth / 2;
+  const rightX = dividerX + columnPadding;
+  const leftWidth = innerWidth / 2 - columnPadding;
+  const rightWidth = width - padding - rightX;
 
-  const titleBill = t(lang, 'details_bill_title');
-  const titleSettlement = t(lang, 'settlement_title');
-  const footer = t(lang, 'footer_made_with');
-
-  const padding = 40;
-  const lineHeight = 26;
-  const titleLineHeight = 36;
-  const footerHeight = 140;
-  const qrSize = 60;
-  const width = 500;
-  const maxTextWidth = width - padding * 2;
-
-  function wrapText(text: string, font: string, maxWidth: number, indentContinuation = ''): string[] {
+  function wrapText(text: string, font: string, maxWidth: number, continuation = ''): string[] {
     context.font = font;
-    const words = text.split('');
     const lines: string[] = [];
-    let currentLine = '';
-    let isFirstLine = true;
-
-    for (let i = 0; i < words.length; i += 1) {
-      const testLine = currentLine + words[i];
-      const testWidth = context.measureText(testLine).width;
-      if (testWidth > maxWidth && currentLine.length > 0) {
-        lines.push(currentLine);
-        currentLine = isFirstLine ? indentContinuation + words[i] : indentContinuation + words[i];
-        isFirstLine = false;
-      } else {
-        currentLine = testLine;
+    for (const paragraph of text.split('\n')) {
+      let current = '';
+      for (const char of graphemes(paragraph)) {
+        if (current && context.measureText(current + char).width > maxWidth) {
+          lines.push(current);
+          current = continuation + char;
+        } else current += char;
       }
+      lines.push(current);
     }
-    if (currentLine) lines.push(currentLine);
     return lines;
   }
 
-  const allLines: LineItem[] = [];
-  allLines.push({ text: currentTime, type: 'time' });
-  allLines.push({ text: '', type: 'gap' });
-  allLines.push({ text: titleBill, type: 'title' });
-  billSection.split('\n').forEach((line) => {
-    if (line.trim()) {
-      allLines.push({ text: line, type: line.trim().startsWith('·') ? 'bullet-bill' : 'normal' });
-    }
-  });
+  const subjects = wrapText(report.name, REPORT_STYLE.subjectFont, innerWidth);
+  const leftLines = report.billSection.split('\n').flatMap((line) =>
+    wrapText(line, REPORT_STYLE.font, leftWidth, line.trim().startsWith('·') ? '      ' : ''));
+  const rightLines = wrapText(report.settlementSection, REPORT_STYLE.font, rightWidth);
+  const subjectY = padding + 34;
+  const timeY = subjectY + (subjects.length - 1) * REPORT_STYLE.subjectLineHeight + 30;
+  const headerRuleY = timeY + 28;
+  const headingY = headerRuleY + 40;
+  const bodyY = headingY + 38;
+  const bodyBottom = bodyY + (Math.max(leftLines.length, rightLines.length) - 1) * lineHeight + 12;
+  const footerY = bodyBottom + 32;
+  const height = Math.ceil(footerY + 40 + padding);
 
-  if (settlementSection) {
-    allLines.push({ text: '', type: 'gap' });
-    allLines.push({ text: titleSettlement, type: 'title' });
-    settlementSection.split('\n').forEach((line) => {
-      if (line.trim()) {
-        allLines.push({ text: line, type: line.trim().startsWith('·') ? 'bullet-settle' : 'normal' });
-      }
-    });
-  }
-
-  context.font = '18px "Yozai Font", cursive, sans-serif';
-  let totalHeight = padding;
-  const wrappedLines: WrappedItem[] = [];
-
-  allLines.forEach((item) => {
-    if (item.type === 'gap') {
-      wrappedLines.push({ lines: [''], type: 'gap', lineHeight: 16 });
-    } else if (item.type === 'time') {
-      wrappedLines.push({ lines: [item.text], type: 'time', lineHeight: 30 });
-    } else if (item.type === 'title') {
-      wrappedLines.push({ lines: [item.text], type: 'title', lineHeight: titleLineHeight });
-    } else {
-      const font = '18px "Yozai Font", cursive, sans-serif';
-      let indent = '';
-      if (item.type === 'bullet-bill') {
-        indent = '      ';
-      } else if (item.type === 'bullet-settle') {
-        indent = '  ';
-      }
-      const wrapped = wrapText(item.text, font, maxTextWidth, indent);
-      wrappedLines.push({ lines: wrapped, type: item.type, lineHeight });
-    }
-  });
-
-  wrappedLines.forEach((item) => {
-    totalHeight += item.lineHeight * item.lines.length;
-  });
-  totalHeight += footerHeight + padding;
-
-  const scale = 2;
   canvas.width = width * scale;
-  canvas.height = totalHeight * scale;
+  canvas.height = height * scale;
   context.scale(scale, scale);
-
-  context.fillStyle = '#fdfbf7';
-  context.fillRect(0, 0, width, totalHeight);
-
-  context.strokeStyle = 'rgba(0,0,0,0.05)';
+  context.save();
+  context.fillStyle = palette.paper;
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = palette.grid;
   context.lineWidth = 1;
-  for (let y = 0; y < totalHeight; y += 20) {
-    context.beginPath();
-    context.moveTo(0, y);
-    context.lineTo(width, y);
-    context.stroke();
-  }
-  for (let x = 0; x < width; x += 20) {
-    context.beginPath();
-    context.moveTo(x, 0);
-    context.lineTo(x, totalHeight);
-    context.stroke();
-  }
-
-  context.fillStyle = '#3a3026';
-  let y = padding + 20;
-
-  wrappedLines.forEach((item) => {
-    item.lines.forEach((line) => {
-      if (item.type === 'time') {
-        context.font = '16px "Yozai Font", cursive, sans-serif';
-        context.fillStyle = '#888';
-        context.fillText(line, padding, y);
-        context.fillStyle = '#3a3026';
-      } else if (item.type === 'title') {
-        context.font = 'bold 20px "Yozai Font", cursive, sans-serif';
-        context.fillStyle = '#3a3026';
-        context.fillText(line, padding, y);
-        context.beginPath();
-        context.setLineDash([5, 5]);
-        context.strokeStyle = '#c8b8a0';
-        context.moveTo(padding, y + 10);
-        context.lineTo(width - padding, y + 10);
-        context.stroke();
-        context.setLineDash([]);
-      } else if (item.type === 'gap') {
-        // skip
-      } else {
-        context.font = '18px "Yozai Font", cursive, sans-serif';
-        context.fillStyle = '#3a3026';
-        context.fillText(line, padding, y);
-      }
-      y += item.lineHeight;
-    });
-  });
-
-  const footerY = totalHeight - footerHeight + 20;
-  context.strokeStyle = '#a08060';
-  context.lineWidth = 2;
-  context.setLineDash([]);
   context.beginPath();
-  context.moveTo(padding, footerY);
-  context.lineTo(width - padding, footerY);
+  for (let y = 0; y < height; y += 20) { context.moveTo(0, y); context.lineTo(width, y); }
+  for (let x = 0; x < width; x += 20) { context.moveTo(x, 0); context.lineTo(x, height); }
   context.stroke();
 
-  context.font = '14px "Yozai Font", cursive, sans-serif';
-  context.fillStyle = '#666';
-  context.fillText(footer, padding, footerY + 30);
-
-  try {
-    const qrCanvas = document.createElement('canvas');
-    await QRCode.toCanvas(qrCanvas, DEMO_URL, {
-      width: qrSize,
-      margin: 0,
-      color: { dark: '#3a3026', light: '#fdfbf7' }
-    });
-
-    context.drawImage(qrCanvas, width - padding - qrSize - 30, footerY + 20, qrSize, qrSize);
-
-    context.font = '12px "Yozai Font", cursive, sans-serif';
-    context.fillStyle = '#888';
-    context.textAlign = 'center';
-    const qrCenterX = width - padding - qrSize - 30 + qrSize / 2;
-    context.fillText(t(lang, 'footer_qr_text'), qrCenterX, footerY + qrSize + 35);
-    context.textAlign = 'left';
-  } catch (error) {
-    console.error('QR code generation failed', error);
+  function rule(x1: number, y1: number, x2: number, y2: number) {
+    context.save();
+    context.strokeStyle = palette.line;
+    context.globalAlpha = .68;
+    context.lineWidth = 1;
+    context.setLineDash([4, 4]);
+    context.beginPath(); context.moveTo(x1, y1); context.lineTo(x2, y2); context.stroke();
+    context.restore();
   }
+  rule(padding, headerRuleY, width - padding, headerRuleY);
+  rule(dividerX, headingY - 20, dividerX, bodyBottom);
+  rule(padding, footerY, width - padding, footerY);
 
-  downloadCanvas(canvas);
-}
+  context.textAlign = 'center';
+  context.font = REPORT_STYLE.subjectFont;
+  context.fillStyle = palette.text;
+  subjects.forEach((line, i) => context.fillText(line, width / 2, subjectY + i * REPORT_STYLE.subjectLineHeight));
+  context.font = REPORT_STYLE.timeFont;
+  context.fillStyle = palette.muted;
+  context.fillText(report.currentTime, width / 2, timeY);
+  context.textAlign = 'left';
 
-function downloadCanvas(canvas: HTMLCanvasElement): void {
+  // Render the same icons as the paper, independent of partially animated DOM.
+  async function icon(Component: typeof ReceiptText, x: number) {
+    const target = document.createElement('div');
+    const component = new Component({ target, props: { size: 20, color: palette.muted } });
+    const svg = target.querySelector('svg')!;
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const source = svg.outerHTML;
+    component.$destroy();
+    const image = new Image();
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+    await image.decode();
+    context.drawImage(image, x, headingY - 17, 20, 20);
+  }
+  await icon(ReceiptText, padding);
+  await icon(HandCoins, rightX);
+  context.font = REPORT_STYLE.titleFont;
+  context.fillStyle = palette.text;
+  context.fillText(t(report.lang, 'details_bill_title'), padding + 28, headingY);
+  context.fillText(t(report.lang, 'settlement_title'), rightX + 28, headingY);
+  context.font = REPORT_STYLE.font;
+  leftLines.forEach((line, i) => context.fillText(line, padding, bodyY + i * lineHeight));
+  context.fillStyle = report.settled ? palette.success : palette.text;
+  rightLines.forEach((line, i) => context.fillText(line, rightX, bodyY + i * lineHeight));
+
+  context.font = REPORT_STYLE.footerFont;
+  context.fillStyle = palette.muted;
+  const footer = t(report.lang, 'footer_made_with');
+  const [beforeHeart, afterHeart = ''] = footer.split('❤️');
+  const metrics = context.measureText(footer.replace('❤️', ''));
+  const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent || 14;
+  const footerBaseline = footerY + 20 + metrics.actualBoundingBoxAscent;
+  context.fillText(beforeHeart, padding, footerBaseline);
+  const heartX = padding + context.measureText(beforeHeart).width;
+  const heartWidth = drawHeart(context, createHeart(), heartX, footerBaseline - metrics.actualBoundingBoxAscent, textHeight, palette.danger);
+  context.fillText(afterHeart, heartX + heartWidth, footerBaseline);
+
+  context.restore();
+
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((value) => value ? resolve(value) : reject(new Error('Image encoding failed')), 'image/png');
+  });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.download = 'bill-details.png';
-  link.href = canvas.toDataURL('image/png');
+  link.href = url;
+  document.body.appendChild(link);
   link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
