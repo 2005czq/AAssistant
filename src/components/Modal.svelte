@@ -42,6 +42,7 @@
       if (!dialog.open) {
         returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         dialog.showModal();
+        dialog.focus({ preventScroll: true });
       }
       await progress.set(1);
     } else {
@@ -57,7 +58,7 @@
     const controls = Array.from(content.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]'));
     const first = controls[0];
     const last = controls[controls.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { event.preventDefault(); last?.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }
 </script>
@@ -65,6 +66,7 @@
 <dialog
   class="modal-overlay"
   aria-modal="true"
+  tabindex="-1"
   bind:this={dialog}
   aria-label={title}
   on:cancel|preventDefault={onClose}
