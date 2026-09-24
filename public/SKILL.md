@@ -1,35 +1,72 @@
 ---
 name: aassistant
-description: Split shared expenses, edit bills, and export settlement plans with AAssistant.
+description: Split shared expenses, manage bills, and calculate minimal settlements with AAssistant.
 ---
 
 # AAssistant
 
-Reuse the task's AAssistant page; otherwise open the [official site](https://2005czq.github.io/AAssistant). Use `window.aassistant` (API version 2), not direct localStorage writes.
+Reuse the task's AAssistant page; otherwise open the [official site](https://2005czq.github.io/AAssistant). The automation API is available at `window.aassistant`.
 
-1. Call `await api.beginEdit()`. Success returns `{ok:true,sessionId,ledger}` with freshly loaded data and exclusive editing rights across tabs. Web input and dragging acquire locks automatically and release on blur/drop; if `EDIT_BUSY`, wait for that interaction to finish before retrying.
-2. Work from that ledger, call the operations below, and inspect each response. Mutations require the same `sessionId`, omitted in the table. `ok:false` supplies an `error` to address; `ok:true` with nonempty `issues` means the change was saved but the bill is not ready to export. Continue until the user's requested result is complete.
-3. Deliver `api.getText()`'s `text`, or `await api.downloadImage()` for PNG (listen for the download first). Check `ok` on exports too.
-4. Release with `await api.endEdit({sessionId})`, including when stopping after an error. `EDIT_REQUIRED` means the session ended and its pending writes must stop.
+```javascript
+const api = window.aassistant;
+```
 
-`api.getLedger()` returns the current ledger directly. Reads and exports do not require an edit session. If `persisted:false`, keep the page open and export the results before leaving.
+---
 
-| Operation | API and arguments |
-| --- | --- |
-| Members | `addMember({name})`; `renameMember({name,newName})`; `removeMember({name})`; `moveMember({name,beforeName})` |
-| Bills | `addBill({bill})`; `updateBill({id,changes})`; `removeBill({id})`; `moveBill({id,beforeId})` |
-| Whole ledger | `renameLedger({name})`; `setLedger({name,members,bills})`; `clearLedger({})`; `loadDemo({})` |
-| Preferences | `setPreferences({currentLang?,currentTheme?})`: `en`/`zh`, `light`/`dark` |
+## Read & Export
 
-Use incremental edits for existing data. Whole-ledger replacement, clearing, and demo loading replace data and reset drafts. For moves, `beforeName:null` or `beforeId:null` appends to the end.
+Reads and exports do not modify data and can be called directly at any time:
 
-A bill has `payer`, `reason`, `type`, and the corresponding fields:
+```javascript
+// Get snapshot of current ledger
+const ledger = api.getLedger(); // { name, members, bills, issues, persisted }
 
-| Type | Fields and split |
-| --- | --- |
-| `AA` | `amount`; equal shares for all members |
-| `Join` / `Remove` | `amount, involved`; include / exclude the selected members |
-| `Ratio` | `amount, ratios: {name: weight}` |
-| `Distribution` | `distribution: {name: amount}`; total is calculated |
+// Get formatted settlement text
+const report = api.getText();   // { ok: true, text, billSection, settlementSection, ... }
 
-Share maps contain every member and are replaced in full. Changing type resets selections and shares. `addBill` assigns and returns `billId`; `setLedger` needs unique positive IDs on its bills. `updateBill.changes` contains only the fields to change, without `id`. Present transfers in their returned order.
+// Download bill PNG image
+const download = await api.downloadImage(); // { ok: true, fileName: 'bill-details.png', ... }
+```
+
+## Mutating the Ledger
+
+All mutations execute as atomic operations and return `{ ok: boolean, issues?, error? }`:
+- `ok: true`: change committed and saved. If `issues` is nonempty, the ledger has incomplete items (e.g. fewer than 2 members) and cannot be exported yet.
+- `ok: false`: check `error.code`. If `EDIT_BUSY`, the user is currently typing in an input or dragging; wait briefly and retry.
+
+```javascript
+// Example workflow
+await api.addMember({ name: 'Alice' });
+await api.addMember({ name: 'Bob' });
+
+const res = await api.addBill({
+  bill: { payer: 'Alice', reason: 'Dinner', type: 'AA', amount: 100 }
+});
+console.log('Created bill ID:', res.billId);
+```
+
+### Available Operations
+
+| Category | API Call and Arguments |
+| :--- | :--- |
+| **Members** | `api.addMember({ name })`<br>`api.renameMember({ name, newName })`<br>`api.removeMember({ name })`<br>`api.moveMember({ name, beforeName })` (set `beforeName: null` to append) |
+| **Bills** | `api.addBill({ bill })` (returns `billId`; do not specify `id` in bill)<br>`api.updateBill({ id, changes })`<br>`api.removeBill({ id })`<br>`api.moveBill({ id, beforeId })` (set `beforeId: null` to append) |
+| **Ledger** | `api.renameLedger({ name })`<br>`api.setLedger({ name, members, bills })`<br>`api.clearLedger()`<br>`api.loadDemo()` |
+| **Preferences** | `api.setPreferences({ currentLang?: 'en'\|'zh', currentTheme?: 'light'\|'dark' })` |
+
+---
+
+## Bill Types and Fields
+
+Every bill requires `payer` (existing member name), `reason` (string, max 60 ASCII chars), `type`, and corresponding fields:
+
+| Type | Additional Fields and Rules |
+| ---: | :--- |
+| `AA` | `amount`: total amount split equally among all members |
+| `Join` | `amount`, `involved`: split equally only among members listed in `involved` |
+| `Remove` | `amount`, `involved`: split equally among all members *except* those in `involved` |
+| `Ratio` | `amount`, `ratios: { [name]: weight }`: weights must include **every member** |
+| `Distribution` | `distribution: { [name]: amount }`: exact amounts for **every member** (total is calculated automatically) |
+
+- In `updateBill({ id, changes })`, pass only the fields to change. Changing `type` resets selections and shares.
+- In `addBill`, omit `id` (assigned automatically). In `setLedger`, each bill must include a positive safe integer `id`.
