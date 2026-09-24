@@ -15,7 +15,7 @@ Agent 友好的在线分账工具，自动计算转账笔数最少的结算方�
 pnpm install
 pnpm dev
 pnpm check
-pnpm fonts:split  # 生成字体分片
+pnpm fonts:split  # 可选：重新生成字体分片（需要 uv）
 pnpm build
 ```
 

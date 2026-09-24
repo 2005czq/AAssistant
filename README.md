@@ -15,7 +15,7 @@ Requires Node.js 18+ and pnpm 9+.
 pnpm install
 pnpm dev
 pnpm check
-pnpm fonts:split  # Pre-generate font subsets
+pnpm fonts:split  # Optional: regenerate font subsets (requires uv)
 pnpm build
 ```
 
