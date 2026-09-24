@@ -1,15 +1,17 @@
+import QRCode from 'qrcode';
 import ReceiptText from 'lucide-svelte/icons/receipt-text';
 import HandCoins from 'lucide-svelte/icons/hand-coins';
+import { DEMO_URL } from './constants';
 import { PALETTES } from './theme';
 import { REPORT_STYLE } from './report';
 import { t } from './i18n';
-import { createHeart, drawHeart } from './heart';
+import { createHeart, drawHeart, measureHeart } from './heart';
 import { graphemes } from './utils';
 import type { TextReport } from './types';
 
 export async function generateAndDownloadImage(report: TextReport): Promise<void> {
   // Canvas text can include characters whose subsets have not appeared in the UI.
-  await document.fonts.load(REPORT_STYLE.font, `${report.text}\n${t(report.lang, 'footer_made_with')}`)
+  await document.fonts.load(REPORT_STYLE.font, `${report.text}\n${t(report.lang, 'footer_made_with')}\n${t(report.lang, 'brand_tagline')}`)
     .catch(() => { /* A failed web font can still export using the configured fallback. */ });
   await document.fonts.ready;
   const canvas = document.createElement('canvas');
@@ -17,7 +19,7 @@ export async function generateAndDownloadImage(report: TextReport): Promise<void
   if (!ctx) throw new Error('Canvas is unavailable');
   const context = ctx;
   const palette = PALETTES[report.theme];
-  const { padding, lineHeight, scale, width, columnPadding } = REPORT_STYLE;
+  const { padding, lineHeight, scale, width, columnPadding, qrSize } = REPORT_STYLE;
   const innerWidth = width - padding * 2;
   const dividerX = padding + innerWidth / 2;
   const rightX = dividerX + columnPadding;
@@ -44,14 +46,19 @@ export async function generateAndDownloadImage(report: TextReport): Promise<void
   const leftLines = report.billSection.split('\n').flatMap((line) =>
     wrapText(line, REPORT_STYLE.font, leftWidth, line.trim().startsWith('·') ? '      ' : ''));
   const rightLines = wrapText(report.settlementSection, REPORT_STYLE.font, rightWidth);
-  const subjectY = padding + 34;
-  const timeY = subjectY + (subjects.length - 1) * REPORT_STYLE.subjectLineHeight + 30;
-  const headerRuleY = timeY + 28;
-  const headingY = headerRuleY + 40;
-  const bodyY = headingY + 38;
+  const subjectY = padding + 28;
+  const timeY = subjectY + (subjects.length - 1) * REPORT_STYLE.subjectLineHeight + 22;
+  const headerRuleY = timeY + 18;
+  const headingY = headerRuleY + 30;
+  const bodyY = headingY + 30;
   const bodyBottom = bodyY + (Math.max(leftLines.length, rightLines.length) - 1) * lineHeight + 12;
-  const footerY = bodyBottom + 32;
-  const height = Math.ceil(footerY + 40 + padding);
+  const footerY = bodyBottom + 24;
+  const qrX = width - padding - qrSize;
+  const qrY = footerY + 14;
+  const textRightX = qrX - 14;
+  const line1Y = qrY + 18;
+  const line2Y = line1Y + 22;
+  const height = Math.ceil(qrY + qrSize + 16);
 
   canvas.width = width * scale;
   canvas.height = height * scale;
@@ -112,17 +119,40 @@ export async function generateAndDownloadImage(report: TextReport): Promise<void
   context.fillStyle = report.settled ? palette.success : palette.text;
   rightLines.forEach((line, i) => context.fillText(line, rightX, bodyY + i * lineHeight));
 
+  try {
+    const qrCanvas = document.createElement('canvas');
+    await QRCode.toCanvas(qrCanvas, DEMO_URL, {
+      width: qrSize * scale,
+      margin: 0,
+      color: { dark: palette.text, light: palette.paper }
+    });
+    context.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+  } catch (error) {
+    console.error('Failed to generate QR code', error);
+  }
+
   context.font = REPORT_STYLE.footerFont;
   context.fillStyle = palette.muted;
   const footer = t(report.lang, 'footer_made_with');
   const [beforeHeart, afterHeart = ''] = footer.split('❤️');
   const metrics = context.measureText(footer.replace('❤️', ''));
   const textHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent || 14;
-  const footerBaseline = footerY + 20 + metrics.actualBoundingBoxAscent;
-  context.fillText(beforeHeart, padding, footerBaseline);
-  const heartX = padding + context.measureText(beforeHeart).width;
-  const heartWidth = drawHeart(context, createHeart(), heartX, footerBaseline - metrics.actualBoundingBoxAscent, textHeight, palette.danger);
-  context.fillText(afterHeart, heartX + heartWidth, footerBaseline);
+  const heart = createHeart();
+  const heartWidth = measureHeart(heart, textHeight);
+  const beforeWidth = context.measureText(beforeHeart).width;
+  const afterWidth = context.measureText(afterHeart).width;
+  const line1Width = beforeWidth + heartWidth + afterWidth;
+  const line1StartX = textRightX - line1Width;
+  context.fillText(beforeHeart, line1StartX, line1Y);
+  const heartX = line1StartX + beforeWidth;
+  drawHeart(context, heart, heartX, line1Y - metrics.actualBoundingBoxAscent, textHeight, palette.danger);
+  context.fillText(afterHeart, heartX + heartWidth, line1Y);
+
+  context.font = REPORT_STYLE.taglineFont;
+  context.fillStyle = palette.muted;
+  const tagline = t(report.lang, 'brand_tagline');
+  const line2Width = context.measureText(tagline).width;
+  context.fillText(tagline, textRightX - line2Width, line2Y);
 
   context.restore();
 
