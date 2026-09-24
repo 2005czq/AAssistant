@@ -1,602 +1,421 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { Bill, BillType, Lang } from '../lib/types';
-  import { t } from '../lib/i18n';
-  import { getTypeOptions } from '../lib/bill';
-  import { formatNumberDisplay, isMobileDevice } from '../lib/utils';
-  import { ICON_BARS, ICON_TRASH } from '../lib/constants';
+  import DecimalInput from './DecimalInput.svelte';
+  import Button from './Button.svelte';
+  import { afterUpdate, beforeUpdate, onDestroy, tick } from 'svelte';
+  import { animate, cancelAnimations, capture, fadeOut, MOTION, presence, reflow, reorderEasing } from '../lib/motion';
+  import { errorCircle } from '../lib/ink';
+  import BillExtras from './BillExtras.svelte';
+  import Menu from 'lucide-svelte/icons/menu';
+  import Plus from 'lucide-svelte/icons/plus';
+  import X from 'lucide-svelte/icons/x';
+  import ReceiptText from 'lucide-svelte/icons/receipt-text';
   import CustomDropdown from './CustomDropdown.svelte';
+  import type { Bill, BillDraft, BillError, BillType, Lang, MemberChange } from '../lib/types';
+  import { t } from '../lib/i18n';
+  import { applyBillChanges, createBillDraft, getTypeOptions } from '../lib/bill';
+  import { distributionTotal, getBillErrors } from '../lib/calculations';
+  import { aassistant, editFromUI, holdUserEdit, onMemberChange, runUserEdit, showEditError } from '../lib/api';
+  import { editLock } from '../lib/edit';
+  import { limitTextLength } from '../lib/utils';
+  import { MAX_BILL_REASON_LENGTH, MIN_MEMBERS } from '../lib/constants';
 
   export let lang: Lang;
   export let members: string[] = [];
   export let bills: Bill[] = [];
   export let isEditMode = false;
-  export let onSetBills: (nextBills: Bill[]) => void;
+  export let visible = true;
 
-  let isMobile = false;
-  let billListEl: HTMLDivElement | null = null;
-  let newBillRowEl: HTMLDivElement | null = null;
+  let draft = createBillDraft(members);
+  let draftError: BillError | null = null;
+  let billList: HTMLDivElement;
+  type BillDrag = {
+    id: number; pointerId: number;
+    startY: number; y: number; phase: 'pending' | 'dragging';
+    hold: ReturnType<typeof holdUserEdit>; finishing: boolean;
+  };
+  let drag: BillDrag | null = null;
+  let scrollFrame = 0;
+  let preserveDragLayout = false;
+  let rows: Bill[] = [];
+  let draftForm: HTMLFormElement;
+  let draftRegion: HTMLDivElement;
+  let before = new Map<HTMLElement, DOMRect>();
+  let beforeDraft: DOMRect | undefined;
+  let initialized = false;
+  let destroyed = false;
+  let addedDraft = false;
+  const removalJobs = new Map<number, symbol>();
+  const reorderMotion = { duration: MOTION.reorder, easing: reorderEasing };
 
-  let draggedEl: HTMLDivElement | null = null;
-
-  let newPayer = '';
-  let newReason = '';
-  let newType: BillType = 'AA';
-  let newAmount = '';
-  let newInvolved: string[] = [];
-  let newDistribution: Record<string, number> = {};
-  let newRatios: Record<string, number> = {};
-
-  onMount(() => {
-    isMobile = isMobileDevice();
+  $: syncRows(bills);
+  $: if (drag && (!visible || isEditMode)) cancelDrag();
+  beforeUpdate(() => {
+    before = capture(billList);
+    beforeDraft = draftForm?.getClientRects().length ? draftForm.getBoundingClientRect() : undefined;
+  });
+  afterUpdate(() => {
+    // Saving the preview must not restart the animations already in progress.
+    if (preserveDragLayout) { preserveDragLayout = false; return; }
+    if (!billList?.getClientRects().length) return;
+    for (const node of Array.from(billList.children) as HTMLElement[]) {
+      const id = Number(node.dataset.id);
+      const removed = !bills.some((bill) => bill.id === id);
+      if (removed && !removalJobs.has(id)) {
+        const token = Symbol();
+        removalJobs.set(id, token);
+        void fadeOut(node).then(() => {
+          if (destroyed || removalJobs.get(id) !== token || bills.some((bill) => bill.id === id)) return;
+          removalJobs.delete(id);
+          rows = rows.filter((bill) => bill.id !== id);
+        });
+      } else if (!removed && removalJobs.has(id)) {
+        removalJobs.delete(id);
+        cancelAnimations(node);
+        node.inert = false;
+        node.style.opacity = '';
+      }
+    }
+    if (drag?.phase === 'dragging') {
+      const gap = billList.querySelector<HTMLElement>(`[data-id="${drag.id}"]`);
+      if (gap) before.delete(gap);
+    }
+    reflow(billList, before, initialized && !!beforeDraft && !drag, reorderMotion);
+    if (beforeDraft && initialized) {
+      const y = beforeDraft.top - draftForm.getBoundingClientRect().top;
+      if (Math.abs(y) > .3) void animate(draftRegion, 'position', [{ transform: `translateY(${y}px)` }, { transform: 'translateY(0)' }], reorderMotion);
+    }
+    if (addedDraft) {
+      addedDraft = false;
+      void animate(draftRegion, 'presence', [{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.reveal, delay: 80, fill: 'backwards' });
+    }
+    initialized = true;
+  });
+  onDestroy(() => {
+    destroyed = true;
+    cancelDrag();
+    if (billList) for (const node of Array.from(billList.children) as HTMLElement[]) cancelAnimations(node);
+    if (draftRegion) cancelAnimations(draftRegion);
   });
 
-  function updateBill(index: number, updater: (bill: Bill) => Bill) {
-    const current = bills[index];
-    if (!current) return;
-    const clone: Bill = {
-      ...current,
-      involved: [...(current.involved || [])],
-      distribution: { ...(current.distribution || {}) },
-      ratios: { ...(current.ratios || {}) }
-    };
-    const updated = updater(clone);
-    const next = bills.slice();
-    next[index] = updated;
-    onSetBills(next);
+  function syncRows(next: Bill[]) {
+    const live = [...next];
+    for (const old of rows) if (!next.some((bill) => bill.id === old.id)) live.splice(Math.min(rows.indexOf(old), live.length), 0, old);
+    rows = live;
   }
 
-  function handleTypeChange(index: number, nextType: string) {
-    updateBill(index, (bill) => {
-      const oldType = bill.type;
-      const type = (nextType || 'AA') as BillType;
-      bill.type = type;
-
-      if (bill.type === 'Distribution' && oldType !== 'Distribution') {
-        bill.amount = 0;
-        bill.distribution = {};
+  function updateBill(bill: BillDraft, patch: Partial<Bill>) {
+    const isDraft = bill === draft;
+    runUserEdit(() => {
+      const ledger = aassistant.getLedger();
+      if (isDraft) draft = applyBillChanges(draft, patch, ledger.members);
+      else if (ledger.bills.some((item) => item.id === bill.id)) {
+        editFromUI(aassistant.updateBill, { id: bill.id, changes: patch });
       }
-      if (bill.type === 'AA') {
-        bill.involved = [];
-        bill.distribution = {};
-        bill.ratios = {};
-      }
-
-      if (bill.type === 'Ratio' && Object.keys(bill.ratios || {}).length === 0) {
-        const nextRatios: Record<string, number> = {};
-        members.forEach((m) => {
-          nextRatios[m] = 1;
-        });
-        bill.ratios = nextRatios;
-      }
-
-      return bill;
     });
   }
 
-  function handleAmountInput(index: number, value: string) {
-    updateBill(index, (bill) => {
-      bill.amount = parseFloat(value) || 0;
-      return bill;
+  function updateReason(bill: BillDraft, event: Event) {
+    if ((event as InputEvent).isComposing) return;
+    const input = event.currentTarget as HTMLInputElement;
+    const reason = limitTextLength(input.value, MAX_BILL_REASON_LENGTH);
+    if (reason !== input.value) {
+      const start = input.selectionStart ?? reason.length;
+      const end = input.selectionEnd ?? start;
+      input.value = reason;
+      input.setSelectionRange(Math.min(start, reason.length), Math.min(end, reason.length));
+    }
+    if (reason !== bill.reason) updateBill(bill, { reason });
+  }
+
+  function changeType(bill: BillDraft, value: string) {
+    updateBill(bill, { type: value as BillType });
+  }
+
+  function updateShare(bill: BillDraft, member: string, value: number) {
+    const ledger = aassistant.getLedger();
+    const current = bill === draft ? draft : ledger.bills.find((item) => item.id === bill.id);
+    if (!current || current.type !== bill.type || !ledger.members.includes(member)) return;
+    const field = bill.type === 'Ratio' ? 'ratios' : 'distribution';
+    updateBill(bill, { [field]: { ...current[field], [member]: value } });
+  }
+
+  function toggleMember(bill: BillDraft, member: string, event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const checked = input.checked;
+    input.checked = !checked;
+    runUserEdit(() => {
+      const ledger = aassistant.getLedger();
+      const current = bill === draft ? draft : ledger.bills.find((item) => item.id === bill.id);
+      if (!current || current.type !== bill.type || !ledger.members.includes(member)) return;
+      updateBill(bill, { involved: checked ? [...new Set([...current.involved, member])] : current.involved.filter((name) => name !== member) });
     });
   }
 
-  function handleReasonInput(index: number, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    updateBill(index, (next) => ({ ...next, reason: input.value }));
+  // The member list is an explicit dependency; draft edits do not reset other fields.
+  $: syncDraftMembers(members);
+  onDestroy(onMemberChange((change, names) => syncDraftMembers(names, change)));
+  $: firstInvalidBill = bills.find((bill) => getBillErrors(bill, members).length > 0);
+  $: draftErrors = getBillErrors(draft, members);
+  // A submit marks one field. Correcting it clears the mark until the next submit.
+  $: if (draftError && !draftErrors.includes(draftError)) {
+    draftError = null;
   }
 
-  function handleAmountInputEvent(index: number, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleAmountInput(index, input.value);
-  }
-
-  function handleAmountBlurEvent(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const val = parseFloat(input.value) || 0;
-    input.value = String(val);
-  }
-
-  function handleDistributionInput(index: number, member: string, value: string) {
-    updateBill(index, (bill) => {
-      const nextVal = parseFloat(value) || 0;
-      bill.distribution[member] = nextVal;
-      const sum = Object.values(bill.distribution).reduce((a, b) => a + b, 0);
-      bill.amount = sum;
-      return bill;
-    });
-  }
-
-  function handleDistributionInputEvent(index: number, member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleDistributionInput(index, member, input.value);
-  }
-
-  function handleDistributionBlurEvent(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const val = parseFloat(input.value) || 0;
-    input.value = String(val);
-  }
-
-  function handleRatioInput(index: number, member: string, value: string) {
-    updateBill(index, (bill) => {
-      const nextVal = parseFloat(value) || 0;
-      bill.ratios[member] = nextVal;
-      return bill;
-    });
-  }
-
-  function handleRatioInputEvent(index: number, member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleRatioInput(index, member, input.value);
-  }
-
-  function handleRatioBlurEvent(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const val = parseFloat(input.value) || 0;
-    input.value = String(val);
-  }
-
-  function handleToggleInvolved(index: number, member: string, checked: boolean) {
-    updateBill(index, (bill) => {
-      if (checked) {
-        if (!bill.involved.includes(member)) bill.involved.push(member);
-      } else {
-        bill.involved = bill.involved.filter((m) => m !== member);
-      }
-      return bill;
-    });
-  }
-
-  function handleInvolvedChange(index: number, member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleToggleInvolved(index, member, input.checked);
-  }
-
-  function handleDelete(index: number) {
-    const next = bills.filter((_, idx) => idx !== index);
-    onSetBills(next);
-  }
-
-  function getDistributionSum(dist: Record<string, number>): number {
-    return Object.values(dist).reduce((a, b) => a + b, 0);
-  }
-
-  function handleNewTypeChange(value: string) {
-    newType = (value || 'AA') as BillType;
-    if (newType === 'Join' || newType === 'Remove') {
-      newInvolved = [];
+  function syncDraftMembers(nextMembers: string[], change?: MemberChange) {
+    if (change?.type === 'reset') {
+      draft = createBillDraft(nextMembers);
+      draftError = null;
+      return;
     }
-    if (newType === 'Distribution') {
-      newDistribution = {};
-      members.forEach((m) => {
-        newDistribution[m] = 0;
-      });
-      newAmount = String(getDistributionSum(newDistribution));
-    }
-    if (newType === 'Ratio') {
-      newRatios = {};
-      members.forEach((m) => {
-        newRatios[m] = 1;
-      });
-    }
-  }
-
-  function syncNewDetails() {
-    if (newType === 'Distribution') {
-      const next: Record<string, number> = {};
-      let changed = false;
-      members.forEach((m) => {
-        if (Object.prototype.hasOwnProperty.call(newDistribution, m)) {
-          next[m] = newDistribution[m];
-        } else {
-          next[m] = 0;
-          changed = true;
-        }
-      });
-      if (Object.keys(newDistribution).some((m) => !members.includes(m))) {
-        changed = true;
-      }
-      if (changed) {
-        newDistribution = next;
-      }
-      newAmount = String(getDistributionSum(newDistribution));
-    }
-
-    if (newType === 'Ratio') {
-      const next: Record<string, number> = {};
-      let changed = false;
-      members.forEach((m) => {
-        if (Object.prototype.hasOwnProperty.call(newRatios, m)) {
-          next[m] = newRatios[m];
-        } else {
-          next[m] = 1;
-          changed = true;
-        }
-      });
-      if (Object.keys(newRatios).some((m) => !members.includes(m))) {
-        changed = true;
-      }
-      if (changed) {
-        newRatios = next;
-      }
-    }
-
-    if (newType === 'Join' || newType === 'Remove') {
-      newInvolved = newInvolved.filter((m) => members.includes(m));
-    }
-  }
-
-  $: syncNewDetails();
-
-  function handleAddBill() {
-    if (!newPayer) return;
-
-    let amount = parseFloat(newAmount) || 0;
-    let involved: string[] = [];
-    let distribution: Record<string, number> = {};
-    let ratios: Record<string, number> = {};
-
-    if (newType === 'Join' || newType === 'Remove') {
-      involved = [...newInvolved];
-    } else if (newType === 'Distribution') {
-      distribution = { ...newDistribution };
-      amount = getDistributionSum(distribution);
-    } else if (newType === 'Ratio') {
-      ratios = { ...newRatios };
-    }
-
-    const nextBill: Bill = {
-      id: Date.now(),
-      payer: newPayer,
-      reason: newReason.trim() || '-',
-      type: newType,
-      amount,
-      involved,
+    const renamed = change?.type === 'rename' ? change : null;
+    const oldName = (name: string) => renamed && name === renamed.newName ? renamed.name : name;
+    const newName = (name: string) => renamed && name === renamed.name ? renamed.newName : name;
+    const payer = newName(draft.payer);
+    const distribution = Object.fromEntries(nextMembers.map((name) => {
+      const value = draft.distribution[oldName(name)];
+      return [name, typeof value === 'number' ? value : 0];
+    }));
+    draft = {
+      ...draft,
+      payer: nextMembers.includes(payer) ? payer : '',
+      involved: draft.involved.map(newName).filter((name) => nextMembers.includes(name)),
       distribution,
-      ratios
+      ratios: Object.fromEntries(nextMembers.map((name) => {
+        const value = draft.ratios[oldName(name)];
+        return [name, typeof value === 'number' ? value : 1];
+      })),
+      amount: draft.type === 'Distribution' ? distributionTotal(distribution) : draft.amount
     };
-
-    onSetBills([...bills, nextBill]);
-
-    newPayer = '';
-    newReason = '';
-    newType = 'AA';
-    newAmount = '';
-    newInvolved = [];
-    newDistribution = {};
-    newRatios = {};
   }
 
-  function handleNewDistributionInput(member: string, value: string) {
-    newDistribution = { ...newDistribution, [member]: parseFloat(value) || 0 };
-    newAmount = String(getDistributionSum(newDistribution));
-  }
-
-  function handleNewDistributionInputEvent(member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleNewDistributionInput(member, input.value);
-  }
-
-  function handleNewRatioInput(member: string, value: string) {
-    newRatios = { ...newRatios, [member]: parseFloat(value) || 0 };
-  }
-
-  function handleNewRatioInputEvent(member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleNewRatioInput(member, input.value);
-  }
-
-  function handleNewInvolvedToggle(member: string, checked: boolean) {
-    if (checked) {
-      if (!newInvolved.includes(member)) {
-        newInvolved = [...newInvolved, member];
+  function addBill() {
+    runUserEdit(() => {
+      const ledger = aassistant.getLedger();
+      if (ledger.members.length < MIN_MEMBERS) return;
+      syncDraftMembers(ledger.members);
+      draftError = getBillErrors(draft, ledger.members)[0] ?? null;
+      if (draftError) return;
+      // The shared validation above rules out empty type and amount values.
+      const { id, ...bill } = draft as Bill;
+      const result = editFromUI(aassistant.addBill, { bill: { ...bill, reason: bill.reason.trim() || '-' } });
+      if (result.ok) {
+        draft = createBillDraft(ledger.members);
+        addedDraft = true;
+        draftError = null;
       }
-    } else {
-      newInvolved = newInvolved.filter((m) => m !== member);
-    }
-  }
-
-  function handleNewInvolvedChange(member: string, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    handleNewInvolvedToggle(member, input.checked);
-  }
-
-  function handleDragStart(event: DragEvent) {
-    const handle = event.currentTarget as HTMLElement | null;
-    const row = handle?.closest('.bill-row') as HTMLDivElement | null;
-    if (!row) {
-      event.preventDefault();
-      return;
-    }
-    draggedEl = row;
-    event.dataTransfer?.setData('text/plain', '');
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
-    }
-    setTimeout(() => row.classList.add('dragging'), 0);
-  }
-
-  function handleDragEnd() {
-    if (draggedEl) {
-      draggedEl.classList.remove('dragging');
-    }
-
-    if (!billListEl) {
-      draggedEl = null;
-      return;
-    }
-
-    const newOrder: Bill[] = [];
-    Array.from(billListEl.children).forEach((child) => {
-      const element = child as HTMLElement;
-      if (element.id === 'new-bill-row') return;
-      const id = Number(element.dataset.id);
-      const bill = bills.find((b) => b.id === id);
-      if (bill) newOrder.push(bill);
     });
-
-    if (newOrder.length === bills.length) {
-      onSetBills(newOrder);
-    }
-
-    draggedEl = null;
   }
 
-  function handleDragOver(event: DragEvent) {
-    if (!draggedEl || !billListEl) return;
+  function startDrag(event: PointerEvent, id: number) {
+    if (event.button !== 0 || !event.isPrimary || drag || !visible || isEditMode || bills.length < 2) return;
     event.preventDefault();
-    const afterElement = getDragAfterElement(billListEl, event.clientY);
-    if (afterElement == null) {
-      if (newBillRowEl) {
-        billListEl.insertBefore(draggedEl, newBillRowEl);
-      } else {
-        billListEl.appendChild(draggedEl);
-      }
-    } else {
-      billListEl.insertBefore(draggedEl, afterElement);
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const hold = holdUserEdit();
+    const current = aassistant.getLedger();
+    if (!current.bills.some((bill) => bill.id === id)) { hold.release(); return; }
+    drag = { id, pointerId: event.pointerId, startY: event.clientY, y: event.clientY, phase: 'pending', hold, finishing: false };
+    const pending = drag;
+    void hold.ready.then((result) => {
+      if (drag !== pending) return;
+      if (!result.ok) { cancelDrag(); showEditError(result.error); }
+      else if (!aassistant.getLedger().bills.some((bill) => bill.id === id)) cancelDrag();
+    });
+    billList.setPointerCapture(event.pointerId);
+  }
+
+  function updateDropTarget(current: BillDrag) {
+    const y = current.y - billList.getBoundingClientRect().top;
+    // Read layout positions so the spring animation cannot move the drop target.
+    const nextRow = Array.from(billList.children).find((element) => {
+      const row = element as HTMLElement;
+      return bills.some((bill) => bill.id === Number(row.dataset.id)) && y < row.offsetTop + row.offsetHeight / 2;
+    }) as HTMLElement | undefined;
+    let index = nextRow ? rows.findIndex((bill) => bill.id === Number(nextRow.dataset.id)) : rows.length;
+    const previousIndex = rows.findIndex((bill) => bill.id === current.id);
+    if (previousIndex < 0) return;
+    if (previousIndex < index) index -= 1;
+    const next = rows.filter((bill) => bill.id !== current.id);
+    next.splice(index, 0, rows[previousIndex]);
+    if (next.some((bill, index) => bill.id !== rows[index].id)) rows = next;
+  }
+
+  function scrollWhileDragging() {
+    const current = drag;
+    if (current?.phase !== 'dragging' || current.finishing) return;
+    const speed = current.y < 48 ? -Math.min(16, (48 - current.y) / 3)
+      : current.y > window.innerHeight - 48 ? Math.min(16, (current.y - window.innerHeight + 48) / 3) : 0;
+    if (speed) {
+      window.scrollBy(0, speed);
+      updateDropTarget(current);
     }
+    scrollFrame = requestAnimationFrame(scrollWhileDragging);
   }
 
-  function getDragAfterElement(container: HTMLElement, y: number): HTMLElement | null {
-    const draggableElements = Array.from(
-      container.querySelectorAll('.bill-row:not(.dragging):not(#new-bill-row)')
-    ) as HTMLElement[];
-
-    const result = draggableElements.reduce(
-      (closest, child) => {
-        const box = child.getBoundingClientRect();
-        const offset = y - box.top - box.height / 2;
-        if (offset < 0 && offset > closest.offset) {
-          return { offset, element: child };
-        }
-        return closest;
-      },
-      { offset: Number.NEGATIVE_INFINITY, element: null as HTMLElement | null }
-    );
-
-    return result.element;
+  function moveDrag(event: PointerEvent) {
+    const current = drag;
+    if (!current || event.pointerId !== current.pointerId || current.finishing) return;
+    current.y = event.clientY;
+    if (current.phase === 'pending') {
+      if (Math.abs(current.y - current.startY) < 6) return;
+      document.body.classList.add('bill-dragging');
+      current.phase = 'dragging';
+      drag = current;
+      scrollFrame = requestAnimationFrame(scrollWhileDragging);
+    }
+    updateDropTarget(current);
   }
 
+  function cancelDrag() {
+    const current = drag;
+    if (!current) return;
+    drag = null;
+    cancelAnimationFrame(scrollFrame);
+    document.body.classList.remove('bill-dragging');
+    if (billList?.hasPointerCapture(current.pointerId)) billList.releasePointerCapture(current.pointerId);
+    current.hold.release();
+    if (!destroyed) syncRows(bills);
+  }
+
+  async function finishDrag() {
+    const current = drag;
+    if (!current || current.finishing) return;
+    current.finishing = true;
+    cancelAnimationFrame(scrollFrame);
+    const ready = await current.hold.ready;
+    if (destroyed || drag !== current) return;
+    if (!ready.ok) { cancelDrag(); showEditError(ready.error); return; }
+    const index = rows.findIndex((bill) => bill.id === current.id);
+    const beforeId = rows.slice(index + 1).find((bill) => bills.some((item) => item.id === bill.id))?.id ?? null;
+    drag = null;
+    document.body.classList.remove('bill-dragging');
+    if (billList?.hasPointerCapture(current.pointerId)) billList.releasePointerCapture(current.pointerId);
+    if (current.phase === 'dragging') {
+      const result = editFromUI(aassistant.moveBill, { id: current.id, beforeId });
+      current.hold.release();
+      if (result.ok) { preserveDragLayout = true; return; }
+    } else current.hold.release();
+    syncRows(bills);
+  }
+
+  function releaseDrag(event: PointerEvent) {
+    if (drag?.pointerId === event.pointerId) void finishDrag();
+  }
+
+  function moveBill(event: KeyboardEvent, id: number) {
+    if (event.isComposing || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    cancelDrag();
+    const handle = event.currentTarget as HTMLButtonElement;
+    runUserEdit(() => {
+      const ledger = aassistant.getLedger();
+      const index = ledger.bills.findIndex((bill) => bill.id === id);
+      const target = index + (event.key === 'ArrowUp' ? -1 : 1);
+      if (index < 0 || target < 0 || target >= ledger.bills.length) return;
+      const beforeId = event.key === 'ArrowUp' ? ledger.bills[target].id : ledger.bills[index + 2]?.id ?? null;
+      editFromUI(aassistant.moveBill, { id, beforeId });
+      tick().then(() => handle.focus({ preventScroll: true }));
+    });
+  }
 </script>
 
-<section id="section-bills" class="notebook-section">
+<svelte:window on:pointermove={moveDrag} on:pointerup={releaseDrag}
+  on:pointercancel={(event) => { if (drag?.pointerId === event.pointerId) cancelDrag(); }} on:blur={cancelDrag}
+  on:keydown={(event) => { if (event.key === 'Escape' && drag) { event.preventDefault(); cancelDrag(); } }} />
+
+<section id="section-bills" class="notebook-section" use:presence={visible}>
   <div class="section-header">
-    <h2>{t(lang, 'bills_title')}</h2>
+    <h2><ReceiptText size={20} aria-hidden="true" /><span>{t(lang, 'bills_title')} <span class="section-count">({bills.length})</span></span></h2>
   </div>
 
-  <div class="bill-list-headers bill-list-header">
-    <span>{t(lang, 'payer')}</span>
-    <span>{t(lang, 'reason')}</span>
-    <span>{t(lang, 'type')}</span>
-    <span>{t(lang, 'amount')}</span>
-    <span></span>
+  <div class="bill-list-header" aria-hidden="true">
+    <span>{t(lang, 'payer')}</span><span>{t(lang, 'reason')}</span>
+    <span>{t(lang, 'type')}</span><span>{t(lang, 'amount')}</span><span></span>
   </div>
 
-  <div id="bill-list" bind:this={billListEl} on:dragover={handleDragOver} role="list">
-    {#each bills as bill, index (bill.id)}
-      <div
-        class="bill-row"
-        data-id={bill.id}
-        role="listitem"
-      >
-        <div class="cell" data-label={t(lang, 'payer')} class:error-circle={!bill.payer || !members.includes(bill.payer)}>
-          <CustomDropdown
-            options={members}
-            value={bill.payer}
-            on:change={(event) => updateBill(index, (next) => ({ ...next, payer: event.detail }))}
-          />
+  <div id="bill-list" role="list" bind:this={billList}
+    on:lostpointercapture={(event) => { if (drag?.pointerId === event.pointerId && !drag.finishing) cancelDrag(); }}>
+    {#each rows as bill (bill.id)}
+      {@const error = firstInvalidBill?.id === bill.id ? getBillErrors(bill, members)[0] : null}
+      <div class="bill-row" class:dragging={drag?.phase === 'dragging' && drag.id === bill.id} data-id={bill.id} role="listitem">
+        <div class="cell" data-label={t(lang, 'payer')}>
+          <div class="bill-control" use:errorCircle={error === 'payer'}>
+            <CustomDropdown options={members} value={bill.payer} label={t(lang, 'payer')} placeholder={t(lang, 'select_payer')}
+              on:change={(event) => updateBill(bill, { payer: event.detail })} />
+          </div>
         </div>
-
         <div class="cell" data-label={t(lang, 'reason')}>
-          <input
-            type="text"
-            value={bill.reason}
-            on:input={(event) => handleReasonInput(index, event)}
-          />
+          <input type="text" value={bill.reason} aria-label={t(lang, 'reason')} use:editLock
+            on:input={(event) => updateReason(bill, event)} on:compositionend={(event) => updateReason(bill, event)} />
         </div>
-
         <div class="cell" data-label={t(lang, 'type')}>
-          <CustomDropdown
-            options={getTypeOptions(lang)}
-            value={bill.type}
-            skipEmpty={true}
-            on:change={(event) => handleTypeChange(index, event.detail)}
-          />
+          <div class="bill-control" use:errorCircle={error === 'type'}>
+            <CustomDropdown options={getTypeOptions(lang)} value={bill.type} label={t(lang, 'type')} placeholder={t(lang, 'select_type')}
+              on:change={(event) => changeType(bill, event.detail)} />
+          </div>
         </div>
-
-        <div
-          class="cell"
-          data-label={t(lang, 'amount')}
-          class:error-circle={bill.type !== 'Distribution' && (!bill.amount || bill.amount <= 0)}
-        >
-          <input
-            type="number"
-            step="0.01"
-            value={bill.amount}
-            disabled={bill.type === 'Distribution'}
-            on:blur={handleAmountBlurEvent}
-            on:input={(event) => handleAmountInputEvent(index, event)}
-          />
+        <div class="cell" data-label={t(lang, 'amount')}>
+          <div class="bill-control" use:errorCircle={error === 'amount'}>
+            <DecimalInput value={bill.amount} aria-invalid={error === 'amount'}
+              aria-label={t(lang, 'amount')} disabled={bill.type === 'Distribution'}
+              on:input={(event) => updateBill(bill, { amount: event.detail })} />
+          </div>
         </div>
-
         <div class="cell actions-cell">
           {#if isEditMode}
-            <button class="btn-delete" on:click={() => handleDelete(index)}>{@html ICON_TRASH}</button>
-          {:else if isMobile}
-            <!-- Empty cell on mobile -->
+            <Button type="button" class="btn-delete" aria-label={t(lang, 'delete_bill')}
+              on:click={() => editFromUI(aassistant.removeBill, { id: bill.id })}>
+              <X size={16} aria-hidden="true" />
+            </Button>
           {:else}
-            <button
-              type="button"
-              class="drag-handle"
-              draggable="true"
-              aria-label="Drag to reorder"
-              on:dragstart={handleDragStart}
-              on:dragend={handleDragEnd}
-            >
-              {@html ICON_BARS}
+            <button type="button" class="drag-handle" aria-label={t(lang, 'reorder_bill')} disabled={bills.length < 2}
+              on:pointerdown={(event) => startDrag(event, bill.id)}
+              on:keydown={(event) => moveBill(event, bill.id)}>
+              <Menu aria-hidden="true" />
             </button>
           {/if}
         </div>
 
-        {#if bill.type === 'Join' || bill.type === 'Remove' || bill.type === 'Distribution' || bill.type === 'Ratio'}
-          <div class="bill-details-row">
-            {#if bill.type === 'Join' || bill.type === 'Remove'}
-              <div
-                class="checkbox-grid"
-                class:error-circle={members.length > 0 && (!bill.involved || bill.involved.length === 0)}
-              >
-                {#each members as member}
-                  <label class="custom-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={bill.involved.includes(member)}
-                      on:change={(event) => handleInvolvedChange(index, member, event)}
-                    />
-                    <span class="checkmark"></span>
-                    <span class="label-text">{member}</span>
-                  </label>
-                {/each}
-              </div>
-            {:else if bill.type === 'Distribution'}
-              <div class="details-grid" class:error-circle={Object.values(bill.distribution).every((v) => v === 0 || v === undefined)}>
-                {#each members as member}
-                  <div class="details-item" class:error-circle={(bill.distribution[member] || 0) < 0}>
-                    <span class="details-item-label">{member}</span>
-                    <input
-                      class="details-input"
-                      type="number"
-                      value={bill.distribution[member] ?? 0}
-                      on:blur={handleDistributionBlurEvent}
-                      on:input={(event) => handleDistributionInputEvent(index, member, event)}
-                    />
-                  </div>
-                {/each}
-              </div>
-            {:else if bill.type === 'Ratio'}
-              <div class="details-grid" class:error-circle={Object.values(bill.ratios || {}).reduce((a, b) => a + b, 0) === 0}>
-                {#each members as member}
-                  <div class="details-item">
-                    <span class="details-item-label" data-member-prop={member}
-                      >{member} ({formatNumberDisplay((bill.ratios?.[member] || 0) > 0 ? ((bill.ratios?.[member] || 0) / Object.values(bill.ratios || {}).reduce((a, b) => a + b, 0)) * bill.amount : 0)})</span
-                    >
-                    <input
-                      class="details-input"
-                      type="number"
-                      min="0"
-                      value={bill.ratios?.[member] ?? 0}
-                      on:blur={handleRatioBlurEvent}
-                      on:input={(event) => handleRatioInputEvent(index, member, event)}
-                    />
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
+        <BillExtras {bill} {members} {error}
+          onToggleMember={(member, event) => toggleMember(bill, member, event)}
+          onUpdateShare={(member, value) => updateShare(bill, member, value)} />
       </div>
     {/each}
+  </div>
 
-    <div class="bill-row new-bill-row" id="new-bill-row" bind:this={newBillRowEl}>
-      <div class="cell" data-label={t(lang, 'payer')}>
-        <CustomDropdown
-          options={members}
-          value={newPayer}
-          on:change={(event) => (newPayer = event.detail)}
-        />
-      </div>
-      <div class="cell" data-label={t(lang, 'reason')}>
-        <input
-          type="text"
-          placeholder={lang === 'zh' ? '事由' : 'Reason'}
-          bind:value={newReason}
-        />
-      </div>
-      <div class="cell" data-label={t(lang, 'type')}>
-        <CustomDropdown
-          options={getTypeOptions(lang)}
-          value={newType}
-          skipEmpty={true}
-          on:change={(event) => handleNewTypeChange(event.detail)}
-        />
-      </div>
-      <div class="cell" data-label={t(lang, 'amount')}>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          bind:value={newAmount}
-          disabled={newType === 'Distribution'}
-        />
-      </div>
-      <div class="cell">
-        <button id="add-bill-btn" on:click={handleAddBill}>{t(lang, 'add')}</button>
-      </div>
-
-      <div class="bill-details-row" class:hidden={newType === 'AA'} id="new-bill-details">
-        <div class="checkbox-grid" class:hidden={newType !== 'Join' && newType !== 'Remove'} id="new-bill-members">
-          {#if newType === 'Join' || newType === 'Remove'}
-            {#each members as member}
-              <label class="custom-checkbox">
-                <input
-                  type="checkbox"
-                  checked={newInvolved.includes(member)}
-                  on:change={(event) => handleNewInvolvedChange(member, event)}
-                />
-                <span class="checkmark"></span>
-                <span class="label-text">{member}</span>
-              </label>
-            {/each}
-          {/if}
-        </div>
-        <div class="details-grid" class:hidden={newType !== 'Distribution' && newType !== 'Ratio'} id="new-bill-dist">
-          {#if newType === 'Distribution'}
-            {#each members as member}
-              <div class="details-item">
-                <span class="details-item-label">{member}</span>
-                <input
-                  type="number"
-                  class="details-input"
-                  value={newDistribution[member] ?? 0}
-                  on:input={(event) => handleNewDistributionInputEvent(member, event)}
-                />
-              </div>
-            {/each}
-          {:else if newType === 'Ratio'}
-            {#each members as member}
-              <div class="details-item">
-                <span class="details-item-label">{member}</span>
-                <input
-                  type="number"
-                  class="details-input"
-                  value={newRatios[member] ?? 1}
-                  on:input={(event) => handleNewRatioInputEvent(member, event)}
-                />
-              </div>
-            {/each}
-          {/if}
-        </div>
+  <div bind:this={draftRegion}>
+  <form bind:this={draftForm} class="bill-row new-bill-row"
+    id="new-bill-row" data-id="0" novalidate on:submit|preventDefault={addBill}>
+    <div class="cell" data-label={t(lang, 'payer')}>
+      <div class="bill-control" use:errorCircle={draftError === 'payer'}>
+        <CustomDropdown options={members} value={draft.payer} label={t(lang, 'payer')} placeholder={t(lang, 'select_payer')}
+          on:change={(event) => updateBill(draft, { payer: event.detail })} />
       </div>
     </div>
+    <div class="cell" data-label={t(lang, 'reason')}>
+      <input type="text" placeholder={t(lang, 'placeholder_reason')} aria-label={t(lang, 'reason')} value={draft.reason} use:editLock
+        on:input={(event) => updateReason(draft, event)} on:compositionend={(event) => updateReason(draft, event)} />
+    </div>
+    <div class="cell" data-label={t(lang, 'type')}>
+      <div class="bill-control" use:errorCircle={draftError === 'type'}>
+        <CustomDropdown options={getTypeOptions(lang)} value={draft.type}
+          label={t(lang, 'type')} placeholder={t(lang, 'select_type')}
+          on:change={(event) => changeType(draft, event.detail)} />
+      </div>
+    </div>
+    <div class="cell" data-label={t(lang, 'amount')}>
+      <div class="bill-control" use:errorCircle={draftError === 'amount'}>
+        <DecimalInput value={draft.amount} aria-invalid={draftError === 'amount'}
+          aria-label={t(lang, 'amount')} placeholder={t(lang, 'placeholder_amount')} disabled={draft.type === 'Distribution'}
+          on:input={(event) => updateBill(draft, { amount: event.detail })} />
+      </div>
+    </div>
+    <div class="cell add-bill-cell">
+      <Button type="submit" id="add-bill-btn" class="btn-icon" aria-label={t(lang, 'add_bill')}><Plus size={20} aria-hidden="true" /></Button>
+    </div>
+
+    <BillExtras bill={draft} {members} error={draftError}
+      onToggleMember={(member, event) => toggleMember(draft, member, event)}
+      onUpdateShare={(member, value) => updateShare(draft, member, value)} />
+  </form>
   </div>
 </section>

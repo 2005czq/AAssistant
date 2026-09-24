@@ -1,49 +1,44 @@
 <script lang="ts">
+  import Button from './Button.svelte';
+  import Moon from 'lucide-svelte/icons/moon';
+  import Sun from 'lucide-svelte/icons/sun';
+  import Bot from 'lucide-svelte/icons/bot';
+  import BookOpen from 'lucide-svelte/icons/book-open';
+  import CirclePlay from 'lucide-svelte/icons/circle-play';
+  import CirclePause from 'lucide-svelte/icons/circle-pause';
+  import { animationsEnabled } from '../lib/motion';
   import type { Lang, Theme } from '../lib/types';
   import { t } from '../lib/i18n';
+  import { GITHUB_URL } from '../lib/constants';
 
   export let lang: Lang;
   export let theme: Theme;
-  export let isEditMode: boolean;
   export let onToggleLang: () => void;
   export let onToggleTheme: () => void;
   export let onDemo: () => void;
-  export let onClear: () => void;
-  export let onToggleEdit: () => void;
-  export let onGithub: () => void;
-
-  $: langText = lang === 'en' ? '中' : 'En';
 </script>
 
-<header>
-  <div class="header-left">
-    <h1>AAssistant</h1>
-    <button id="github-btn" class="btn-icon" aria-label="GitHub" on:click={onGithub}>
-      <i class="fab fa-github"></i>
-    </button>
-    <button id="lang-toggle" class="btn-icon" aria-label="Switch Language" on:click={onToggleLang}>
-      <span class="lang-text">{langText}</span>
-    </button>
-    <button id="theme-toggle" class="btn-icon" aria-label="Toggle Theme" on:click={onToggleTheme}>
-      <svg class="icon-moon" class:hidden={theme === 'dark'} viewBox="0 0 24 24">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-      </svg>
-      <svg class="icon-sun" class:hidden={theme !== 'dark'} viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="5" />
-        <line x1="12" y1="1" x2="12" y2="3" />
-        <line x1="12" y1="21" x2="12" y2="23" />
-        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-        <line x1="1" y1="12" x2="3" y2="12" />
-        <line x1="21" y1="12" x2="23" y2="12" />
-        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-      </svg>
-    </button>
-  </div>
-  <div class="header-right">
-    <button id="demo-btn" on:click={onDemo}>{t(lang, 'demo')}</button>
-    <button id="edit-btn" on:click={onToggleEdit}>{isEditMode ? t(lang, 'done') : t(lang, 'edit')}</button>
-    <button id="clear-btn" class="btn-danger" on:click={onClear}>{t(lang, 'clear')}</button>
+<header class="workspace-header">
+    <div class="brand">
+      <h1><a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">AAssistant</a></h1>
+      <p>{t(lang, 'brand_tagline')}</p>
+    </div>
+    <div class="app-controls">
+      <Button id="agent-guide-btn" class="btn-icon" aria-label={t(lang, 'agent_guide')} title={t(lang, 'agent_guide')}
+        on:click={() => window.open('./SKILL.md', '_blank', 'noopener,noreferrer')}><Bot size={20} aria-hidden="true" /></Button>
+      <Button id="lang-toggle" class="btn-icon" aria-label={t(lang, 'switch_language')} title={t(lang, 'switch_language')} on:click={onToggleLang}>
+        <span>{lang === 'en' ? '中' : 'En'}</span>
+      </Button>
+      <Button id="theme-toggle" class="btn-icon" aria-label={t(lang, 'toggle_theme')} title={t(lang, 'toggle_theme')} on:click={onToggleTheme}>
+        {#if theme === 'dark'}<Sun aria-hidden="true" />{:else}<Moon aria-hidden="true" />{/if}
+      </Button>
+      <Button id="animation-toggle" class="btn-icon" aria-label={t(lang, $animationsEnabled ? 'disable_animations' : 'enable_animations')}
+        title={t(lang, $animationsEnabled ? 'disable_animations' : 'enable_animations')} aria-pressed={$animationsEnabled}
+        on:click={() => animationsEnabled.update((enabled) => !enabled)}>
+        {#if $animationsEnabled}<CirclePause size={20} aria-hidden="true" />{:else}<CirclePlay size={20} aria-hidden="true" />{/if}
+      </Button>
+    </div>
+  <div class="header-actions" role="group" aria-label={t(lang, 'ledger_tools')}>
+    <Button id="demo-btn" on:click={onDemo}><BookOpen size={18} aria-hidden="true" />{t(lang, 'demo')}</Button>
   </div>
 </header>
