@@ -18,7 +18,6 @@ type Notice = 'editing_busy' | 'storage_restore_failed' | 'storage_save_failed' 
 
 let data: AppState = { name: '', members: [], bills: [], currentLang: 'en', currentTheme: 'light' };
 let localUIHolds = 0;
-let remoteUIBusy = false;
 let nextId = 1;
 let generation = 0;
 let persisted = true;
@@ -28,38 +27,18 @@ let settlement = calculateSettlement(data.members, data.bills);
 let issues = ledgerIssues(data);
 let report: TextReport | null = null;
 
-let channel: BroadcastChannel | null = null;
-try {
-  if (typeof BroadcastChannel !== 'undefined') {
-    channel = new BroadcastChannel('aassistant_ui');
-    channel.onmessage = (event) => {
-      if (event.data?.type === 'UI_STATUS') {
-        remoteUIBusy = !!event.data.busy;
-      }
-    };
-  }
-} catch {
-  // BroadcastChannel might not be supported in some environments
-}
-
 export function isUIBusy(): boolean {
-  return localUIHolds > 0 || remoteUIBusy;
+  return localUIHolds > 0;
 }
 
 export function holdUI(): () => void {
   localUIHolds++;
-  if (localUIHolds === 1 && channel) {
-    channel.postMessage({ type: 'UI_STATUS', busy: true });
-  }
   publish();
   let released = false;
   return () => {
     if (!released) {
       released = true;
       localUIHolds = Math.max(0, localUIHolds - 1);
-      if (localUIHolds === 0 && channel) {
-        channel.postMessage({ type: 'UI_STATUS', busy: false });
-      }
       publish();
     }
   };
@@ -126,7 +105,6 @@ function handleStorage(event: StorageEvent) {
 
 if (import.meta.hot) import.meta.hot.dispose(() => {
   window.removeEventListener('storage', handleStorage);
-  channel?.close();
 });
 
 function apiFailure(error: unknown, fallback: ApiError['code'] = 'INVALID_ARGUMENT'): { ok: false; error: ApiError } {
@@ -134,9 +112,6 @@ function apiFailure(error: unknown, fallback: ApiError['code'] = 'INVALID_ARGUME
 }
 
 function request(value: unknown, keys: string[]): Record<string, unknown> {
-  if (isUIBusy()) {
-    throw new InputError({ code: 'EDIT_BUSY', message: 'The ledger is being edited. Retry after the current interaction finishes.' });
-  }
   const input = object(value ?? {});
   // Allow optional sessionId for backwards compatibility if callers still pass it
   const allowed = 'sessionId' in input ? [...keys, 'sessionId'] : keys;
@@ -239,7 +214,6 @@ function getText(): ApiResult<TextReport> {
 
 export const aassistant = Object.freeze({
   beginEdit: () => {
-    if (isUIBusy()) return apiFailure(new InputError({ code: 'EDIT_BUSY', message: 'The ledger is being edited. Retry after the user finishes interacting.' }));
     return { ok: true, ledger: aassistant.getLedger() };
   },
 
@@ -410,4 +384,34 @@ export const aassistant = Object.freeze({
       return apiFailure(error, 'EXPORT_FAILED');
     }
   }
+});
+
+function agentGuard<T extends (...args: any[]) => any>(fn: T): T {
+  return ((...args: any[]) => {
+    if (isUIBusy()) {
+      return apiFailure(new InputError({
+        code: 'EDIT_BUSY',
+        message: 'The ledger is being edited by the user. Retry after the user finishes interacting.'
+      }));
+    }
+    return fn(...args);
+  }) as T;
+}
+
+export const agentApi = Object.freeze({
+  ...aassistant,
+  beginEdit: agentGuard(aassistant.beginEdit),
+  setLedger: agentGuard(aassistant.setLedger),
+  renameLedger: agentGuard(aassistant.renameLedger),
+  addMember: agentGuard(aassistant.addMember),
+  renameMember: agentGuard(aassistant.renameMember),
+  removeMember: agentGuard(aassistant.removeMember),
+  moveMember: agentGuard(aassistant.moveMember),
+  addBill: agentGuard(aassistant.addBill),
+  updateBill: agentGuard(aassistant.updateBill),
+  removeBill: agentGuard(aassistant.removeBill),
+  moveBill: agentGuard(aassistant.moveBill),
+  clearLedger: agentGuard(aassistant.clearLedger),
+  loadDemo: agentGuard(aassistant.loadDemo),
+  setPreferences: agentGuard(aassistant.setPreferences)
 });

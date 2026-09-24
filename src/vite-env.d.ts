@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
-import type { aassistant } from './lib/api';
+import type { agentApi } from './lib/api';
 
 declare global {
   interface Window {
-    readonly aassistant: typeof aassistant;
+    readonly aassistant: typeof agentApi;
   }
 }
