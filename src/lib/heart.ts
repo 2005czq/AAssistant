@@ -64,6 +64,11 @@ function heartBounds(heart: Heart) {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
+export function measureHeart(heart: Heart, height: number): number {
+  const bounds = heartBounds(heart);
+  return bounds.width * (height / bounds.height);
+}
+
 export function drawHeart(ctx: CanvasRenderingContext2D, heart: Heart, x: number, y: number, height: number, color: string): number {
   const bounds = heartBounds(heart);
   const scale = height / bounds.height;
