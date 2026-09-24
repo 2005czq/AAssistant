@@ -7,7 +7,7 @@
   import UsersRound from 'lucide-svelte/icons/users-round';
   import type { Lang } from '../lib/types';
   import { MAX_MEMBER_NAME_LENGTH, MAX_MEMBERS, MIN_MEMBERS } from '../lib/constants';
-  import { aassistant, editFromUI, holdUserEdit, onMemberChange, runUserEdit, showEditError } from '../lib/api';
+  import { aassistant, holdUI, onMemberChange } from '../lib/api';
   import { editLock } from '../lib/edit';
   import { animate, autoHeight, cancelAnimations, capture, fadeOut, MOTION, reflow, reorderEasing } from '../lib/motion';
   import { errorCircle } from '../lib/ink';
@@ -35,7 +35,7 @@
     key: number; name: string; pointerId: number;
     phase: 'pending' | 'dragging';
     startX: number; startY: number; x: number; y: number;
-    hold: ReturnType<typeof holdUserEdit>; finishing: boolean;
+    hold: () => void; finishing: boolean;
   };
   let drag: MemberDrag | null = null;
   let scrollFrame = 0;
@@ -176,20 +176,14 @@
     if (event.button !== 0 || !event.isPrimary || drag || isEditMode || item.draft || item.removing || members.length < 2) return;
     event.preventDefault();
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const hold = holdUserEdit();
     const current = aassistant.getLedger();
-    if (!current.members.includes(item.name)) { hold.release(); return; }
+    if (!current.members.includes(item.name)) return;
+    const hold = holdUI();
     drag = {
       key: item.key, name: item.name, pointerId: event.pointerId, phase: 'pending',
       startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY,
       hold, finishing: false
     };
-    const pending = drag;
-    void hold.ready.then((result) => {
-      if (drag !== pending) return;
-      if (!result.ok) { cancelDrag(); showEditError(result.error); }
-      else if (!aassistant.getLedger().members.includes(pending.name)) cancelDrag();
-    });
     // The list stays mounted while keyed member slots move around it.
     list.setPointerCapture(event.pointerId);
   }
@@ -262,28 +256,26 @@
     cancelAnimationFrame(scrollFrame);
     document.body.classList.remove('member-dragging');
     releaseCapture(current);
-    current.hold.release();
+    current.hold();
     if (!destroyed) reconcile(members);
   }
 
-  async function finishDrag() {
+  function finishDrag() {
     const current = drag;
     if (!current || current.finishing) return;
     current.finishing = true;
     cancelAnimationFrame(scrollFrame);
-    const ready = await current.hold.ready;
     if (destroyed || drag !== current) return;
-    if (!ready.ok) { cancelDrag(); showEditError(ready.error); return; }
     const index = items.findIndex((item) => item.key === current.key);
     const beforeName = items.slice(index + 1).find((item) => !item.draft && !item.removing)?.name ?? null;
     drag = null;
     document.body.classList.remove('member-dragging');
     releaseCapture(current);
     if (current.phase === 'dragging') {
-      const result = editFromUI(aassistant.moveMember, { name: current.name, beforeName });
-      current.hold.release();
+      const result = aassistant.moveMember({ name: current.name, beforeName });
+      current.hold();
       if (result.ok) { preserveDragLayout = true; return; }
-    } else current.hold.release();
+    } else current.hold();
     reconcile(members);
   }
 
@@ -296,16 +288,14 @@
     event.preventDefault();
     cancelDrag();
     const handle = event.currentTarget as HTMLButtonElement;
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      const index = ledger.members.indexOf(item.name);
-      const backwards = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
-      const target = index + (backwards ? -1 : 1);
-      if (index < 0 || target < 0 || target >= ledger.members.length) return;
-      const beforeName = backwards ? ledger.members[target] : ledger.members[index + 2] ?? null;
-      editFromUI(aassistant.moveMember, { name: item.name, beforeName });
-      void tick().then(() => handle.focus({ preventScroll: true }));
-    });
+    const ledger = aassistant.getLedger();
+    const index = ledger.members.indexOf(item.name);
+    const backwards = event.key === 'ArrowLeft' || event.key === 'ArrowUp';
+    const target = index + (backwards ? -1 : 1);
+    if (index < 0 || target < 0 || target >= ledger.members.length) return;
+    const beforeName = backwards ? ledger.members[target] : ledger.members[index + 2] ?? null;
+    aassistant.moveMember({ name: item.name, beforeName });
+    void tick().then(() => handle.focus({ preventScroll: true }));
   }
 
   function editName(event: Event, item: MemberItem) {
@@ -329,28 +319,26 @@
     const name = limitTextLength(input.value.trim(), MAX_MEMBER_NAME_LENGTH);
     input.value = name;
     editingKey = null;
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      if (item.draft) {
-        if (!name || ledger.members.includes(name) || ledger.members.length >= MAX_MEMBERS) {
-          newMember = '';
-          input.value = '';
-          return;
-        }
-        promotion = { key: item.key, name };
-        const result = editFromUI(aassistant.addMember, { name });
-        if (result.ok) newMember = '';
-        else promotion = null;
-      } else if (!ledger.members.includes(item.name)) {
+    const ledger = aassistant.getLedger();
+    if (item.draft) {
+      if (!name || ledger.members.includes(name) || ledger.members.length >= MAX_MEMBERS) {
+        newMember = '';
+        input.value = '';
         return;
-      } else if (!name) {
-        editFromUI(aassistant.removeMember, { name: item.name });
-      } else {
-        const result = editFromUI(aassistant.renameMember, { name: item.name, newName: name });
-        if (result.ok) item.name = name;
-        input.value = result.ok ? name : item.name;
       }
-    });
+      promotion = { key: item.key, name };
+      const result = aassistant.addMember({ name });
+      if (result.ok) newMember = '';
+      else promotion = null;
+    } else if (!ledger.members.includes(item.name)) {
+      return;
+    } else if (!name) {
+      aassistant.removeMember({ name: item.name });
+    } else {
+      const result = aassistant.renameMember({ name: item.name, newName: name });
+      if (result.ok) item.name = name;
+      input.value = result.ok ? name : item.name;
+    }
   }
 
   function handleKey(event: KeyboardEvent, item: MemberItem) {
@@ -401,7 +389,7 @@
               {#if isEditMode}
                 <Button type="button" class="member-action delete-member" disabled={item.removing}
                   aria-label={t(lang, 'delete_member', { name: item.name })}
-                  on:click={() => editFromUI(aassistant.removeMember, { name: item.name })}><X size={16} aria-hidden="true" /></Button>
+                  on:click={() => aassistant.removeMember({ name: item.name })}><X size={16} aria-hidden="true" /></Button>
               {:else}
                 <button type="button" class="member-action member-drag-handle" disabled={members.length < 2 || item.removing}
                   aria-label={t(lang, 'reorder_member', { name: item.name })}

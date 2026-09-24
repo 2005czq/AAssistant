@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { t } from './lib/i18n';
-  import { aassistant, appState, editFromUI, holdUserEdit, notices, runUserEdit, showEditError } from './lib/api';
+  import { aassistant, appState, holdUI, notices } from './lib/api';
   import { applyTheme } from './lib/theme';
   import { MIN_MEMBERS } from './lib/constants';
   import Header from './components/Header.svelte';
@@ -15,68 +15,55 @@
   import Eraser from 'lucide-svelte/icons/eraser';
   import Info from 'lucide-svelte/icons/info';
 
-  let editModeHold: ReturnType<typeof holdUserEdit> | null = null;
   let isEditMode = false;
   let lastGeneration = 0;
   let confirmationAction: 'demo' | 'clear' = 'clear';
   let confirmationOpen = false;
-  let confirmationHold: ReturnType<typeof holdUserEdit> | null = null;
+  let confirmationHold: (() => void) | null = null;
   let members = $appState.members;
   let bills = $appState.bills;
 
-  async function requestAction(action: 'demo' | 'clear') {
+  function requestAction(action: 'demo' | 'clear') {
     if (confirmationHold) return;
-    const hold = confirmationHold = holdUserEdit();
-    const result = await hold.ready;
-    if (confirmationHold !== hold) return;
-    if (!result.ok) { closeConfirmation(); showEditError(result.error); return; }
     const current = aassistant.getLedger();
     const unnamed = !current.name.trim() || [t('en', 'untitled_ledger'), t('zh', 'untitled_ledger')].includes(current.name.trim());
-    if (action === 'clear' && !current.members.length && !current.bills.length && unnamed) { closeConfirmation(); return; }
+    if (action === 'clear' && !current.members.length && !current.bills.length && unnamed) return;
     if (action === 'demo' && !current.members.length && !current.bills.length && unnamed) {
-      editFromUI(aassistant.loadDemo, {});
-      closeConfirmation();
+      aassistant.loadDemo();
       return;
     }
+    confirmationHold = holdUI();
     confirmationAction = action;
     confirmationOpen = true;
   }
 
   function confirmAction() {
     if (!confirmationOpen) return;
-    if (confirmationAction === 'clear') editFromUI(aassistant.clearLedger, {});
-    else editFromUI(aassistant.loadDemo, {});
+    if (confirmationAction === 'clear') aassistant.clearLedger();
+    else aassistant.loadDemo();
     closeConfirmation();
   }
 
   function closeConfirmation() {
     confirmationOpen = false;
-    confirmationHold?.release();
+    confirmationHold?.();
     confirmationHold = null;
   }
 
-  async function toggleEditMode() {
-    if (editModeHold) { closeUserEditing(); return; }
-    const hold = editModeHold = holdUserEdit();
-    const result = await hold.ready;
-    if (editModeHold !== hold) return;
-    if (!result.ok) { closeUserEditing(); showEditError(result.error); return; }
-    isEditMode = true;
+  function toggleEditMode() {
+    isEditMode = !isEditMode;
+    if (!isEditMode) closeUserEditing();
   }
 
   function closeUserEditing() {
-    if (editModeHold) {
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      editModeHold.release();
-      editModeHold = null;
-    }
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     isEditMode = false;
     closeConfirmation();
   }
 
   onDestroy(closeUserEditing);
 
-  $: if ((isEditMode && !$appState.editing) || (confirmationOpen && !$appState.editing) || $appState.generation !== lastGeneration) {
+  $: if ($appState.generation !== lastGeneration) {
     closeUserEditing();
     lastGeneration = $appState.generation;
   }
@@ -99,12 +86,12 @@
     lang={$appState.currentLang}
     theme={$appState.currentTheme}
     onDemo={() => requestAction('demo')}
-    onToggleLang={() => runUserEdit(() => { editFromUI(aassistant.setPreferences, {
+    onToggleLang={() => aassistant.setPreferences({
       currentLang: $appState.currentLang === 'en' ? 'zh' : 'en'
-    }); })}
-    onToggleTheme={() => runUserEdit(() => { editFromUI(aassistant.setPreferences, {
+    })}
+    onToggleTheme={() => aassistant.setPreferences({
       currentTheme: $appState.currentTheme === 'light' ? 'dark' : 'light'
-    }); })}
+    })}
   />
 
   <main class="paper-stack">
@@ -113,7 +100,7 @@
         <LedgerHeader lang={$appState.currentLang} name={$appState.name}
           {hasMembers} hasBills={bills.length > 0} {isEditMode}
           onToggleEdit={toggleEditMode}
-          onRename={(name) => runUserEdit(() => { editFromUI(aassistant.renameLedger, { name }); })}
+          onRename={(name) => aassistant.renameLedger({ name })}
           onClear={() => requestAction('clear')} />
         <MembersSection lang={$appState.currentLang} {members}
           {isEditMode} />

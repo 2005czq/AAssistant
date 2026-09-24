@@ -14,7 +14,7 @@
   import { t } from '../lib/i18n';
   import { applyBillChanges, createBillDraft, getTypeOptions } from '../lib/bill';
   import { distributionTotal, getBillErrors } from '../lib/calculations';
-  import { aassistant, editFromUI, holdUserEdit, onMemberChange, runUserEdit, showEditError } from '../lib/api';
+  import { aassistant, holdUI, onMemberChange } from '../lib/api';
   import { editLock } from '../lib/edit';
   import { limitTextLength } from '../lib/utils';
   import { MAX_BILL_REASON_LENGTH, MIN_MEMBERS } from '../lib/constants';
@@ -31,7 +31,7 @@
   type BillDrag = {
     id: number; pointerId: number;
     startY: number; y: number; phase: 'pending' | 'dragging';
-    hold: ReturnType<typeof holdUserEdit>; finishing: boolean;
+    hold: () => void; finishing: boolean;
   };
   let drag: BillDrag | null = null;
   let scrollFrame = 0;
@@ -105,13 +105,11 @@
 
   function updateBill(bill: BillDraft, patch: Partial<Bill>) {
     const isDraft = bill === draft;
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      if (isDraft) draft = applyBillChanges(draft, patch, ledger.members);
-      else if (ledger.bills.some((item) => item.id === bill.id)) {
-        editFromUI(aassistant.updateBill, { id: bill.id, changes: patch });
-      }
-    });
+    const ledger = aassistant.getLedger();
+    if (isDraft) draft = applyBillChanges(draft, patch, ledger.members);
+    else if (ledger.bills.some((item) => item.id === bill.id)) {
+      aassistant.updateBill({ id: bill.id, changes: patch });
+    }
   }
 
   function updateReason(bill: BillDraft, event: Event) {
@@ -143,12 +141,10 @@
     const input = event.currentTarget as HTMLInputElement;
     const checked = input.checked;
     input.checked = !checked;
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      const current = bill === draft ? draft : ledger.bills.find((item) => item.id === bill.id);
-      if (!current || current.type !== bill.type || !ledger.members.includes(member)) return;
-      updateBill(bill, { involved: checked ? [...new Set([...current.involved, member])] : current.involved.filter((name) => name !== member) });
-    });
+    const ledger = aassistant.getLedger();
+    const current = bill === draft ? draft : ledger.bills.find((item) => item.id === bill.id);
+    if (!current || current.type !== bill.type || !ledger.members.includes(member)) return;
+    updateBill(bill, { involved: checked ? [...new Set([...current.involved, member])] : current.involved.filter((name) => name !== member) });
   }
 
   // The member list is an explicit dependency; draft edits do not reset other fields.
@@ -189,37 +185,29 @@
   }
 
   function addBill() {
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      if (ledger.members.length < MIN_MEMBERS) return;
-      syncDraftMembers(ledger.members);
-      draftError = getBillErrors(draft, ledger.members)[0] ?? null;
-      if (draftError) return;
-      // The shared validation above rules out empty type and amount values.
-      const { id, ...bill } = draft as Bill;
-      const result = editFromUI(aassistant.addBill, { bill: { ...bill, reason: bill.reason.trim() || '-' } });
-      if (result.ok) {
-        draft = createBillDraft(ledger.members);
-        addedDraft = true;
-        draftError = null;
-      }
-    });
+    const ledger = aassistant.getLedger();
+    if (ledger.members.length < MIN_MEMBERS) return;
+    syncDraftMembers(ledger.members);
+    draftError = getBillErrors(draft, ledger.members)[0] ?? null;
+    if (draftError) return;
+    // The shared validation above rules out empty type and amount values.
+    const { id, ...bill } = draft as Bill;
+    const result = aassistant.addBill({ bill: { ...bill, reason: bill.reason.trim() || '-' } });
+    if (result.ok) {
+      draft = createBillDraft(ledger.members);
+      addedDraft = true;
+      draftError = null;
+    }
   }
 
   function startDrag(event: PointerEvent, id: number) {
     if (event.button !== 0 || !event.isPrimary || drag || !visible || isEditMode || bills.length < 2) return;
     event.preventDefault();
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const hold = holdUserEdit();
     const current = aassistant.getLedger();
-    if (!current.bills.some((bill) => bill.id === id)) { hold.release(); return; }
+    if (!current.bills.some((bill) => bill.id === id)) return;
+    const hold = holdUI();
     drag = { id, pointerId: event.pointerId, startY: event.clientY, y: event.clientY, phase: 'pending', hold, finishing: false };
-    const pending = drag;
-    void hold.ready.then((result) => {
-      if (drag !== pending) return;
-      if (!result.ok) { cancelDrag(); showEditError(result.error); }
-      else if (!aassistant.getLedger().bills.some((bill) => bill.id === id)) cancelDrag();
-    });
     billList.setPointerCapture(event.pointerId);
   }
 
@@ -272,28 +260,26 @@
     cancelAnimationFrame(scrollFrame);
     document.body.classList.remove('bill-dragging');
     if (billList?.hasPointerCapture(current.pointerId)) billList.releasePointerCapture(current.pointerId);
-    current.hold.release();
+    current.hold();
     if (!destroyed) syncRows(bills);
   }
 
-  async function finishDrag() {
+  function finishDrag() {
     const current = drag;
     if (!current || current.finishing) return;
     current.finishing = true;
     cancelAnimationFrame(scrollFrame);
-    const ready = await current.hold.ready;
     if (destroyed || drag !== current) return;
-    if (!ready.ok) { cancelDrag(); showEditError(ready.error); return; }
     const index = rows.findIndex((bill) => bill.id === current.id);
     const beforeId = rows.slice(index + 1).find((bill) => bills.some((item) => item.id === bill.id))?.id ?? null;
     drag = null;
     document.body.classList.remove('bill-dragging');
     if (billList?.hasPointerCapture(current.pointerId)) billList.releasePointerCapture(current.pointerId);
     if (current.phase === 'dragging') {
-      const result = editFromUI(aassistant.moveBill, { id: current.id, beforeId });
-      current.hold.release();
+      const result = aassistant.moveBill({ id: current.id, beforeId });
+      current.hold();
       if (result.ok) { preserveDragLayout = true; return; }
-    } else current.hold.release();
+    } else current.hold();
     syncRows(bills);
   }
 
@@ -306,15 +292,13 @@
     event.preventDefault();
     cancelDrag();
     const handle = event.currentTarget as HTMLButtonElement;
-    runUserEdit(() => {
-      const ledger = aassistant.getLedger();
-      const index = ledger.bills.findIndex((bill) => bill.id === id);
-      const target = index + (event.key === 'ArrowUp' ? -1 : 1);
-      if (index < 0 || target < 0 || target >= ledger.bills.length) return;
-      const beforeId = event.key === 'ArrowUp' ? ledger.bills[target].id : ledger.bills[index + 2]?.id ?? null;
-      editFromUI(aassistant.moveBill, { id, beforeId });
-      tick().then(() => handle.focus({ preventScroll: true }));
-    });
+    const ledger = aassistant.getLedger();
+    const index = ledger.bills.findIndex((bill) => bill.id === id);
+    const target = index + (event.key === 'ArrowUp' ? -1 : 1);
+    if (index < 0 || target < 0 || target >= ledger.bills.length) return;
+    const beforeId = event.key === 'ArrowUp' ? ledger.bills[target].id : ledger.bills[index + 2]?.id ?? null;
+    aassistant.moveBill({ id, beforeId });
+    tick().then(() => handle.focus({ preventScroll: true }));
   }
 </script>
 
@@ -363,7 +347,7 @@
         <div class="cell actions-cell">
           {#if isEditMode}
             <Button type="button" class="btn-delete" aria-label={t(lang, 'delete_bill')}
-              on:click={() => editFromUI(aassistant.removeBill, { id: bill.id })}>
+              on:click={() => aassistant.removeBill({ id: bill.id })}>
               <X size={16} aria-hidden="true" />
             </Button>
           {:else}

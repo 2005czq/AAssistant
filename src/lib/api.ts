@@ -10,25 +10,15 @@ import { loadLedger, loadPreferences, saveLedger, savePreferences, PREFERENCES_K
 import { detectSystemLanguage, detectSystemTheme, getCurrentTimeFormatted } from './utils';
 import { t } from './i18n';
 
-type EditRequest = { sessionId: string };
-type Editor = 'user' | 'agent';
 type MutationResult = ApiResult<MutationReceipt>;
 type LedgerView = LedgerSnapshot & {
   generation: number; editing: boolean; result: ApiResult<TextReport>;
 };
 type Notice = 'editing_busy' | 'storage_restore_failed' | 'storage_save_failed' | 'preferences_unavailable';
-type EditSession = { id: string; owner: Editor; expires: number };
-type UserHold = { ready: Promise<ApiResult<{}>>; release: () => void };
-const LOCK_TIMEOUT = 15_000;
 
 let data: AppState = { name: '', members: [], bills: [], currentLang: 'en', currentTheme: 'light' };
-let session: EditSession | null = null;
-let acquiring = false;
-let disposed = false;
-let heartbeat: ReturnType<typeof setInterval>;
-let released = Promise.resolve();
-let userRequest: Promise<ApiResult<{}>> | null = null;
-const userHolds = new Set<symbol>();
+let localUIHolds = 0;
+let remoteUIBusy = false;
 let nextId = 1;
 let generation = 0;
 let persisted = true;
@@ -37,6 +27,44 @@ let restoreFailed = false;
 let settlement = calculateSettlement(data.members, data.bills);
 let issues = ledgerIssues(data);
 let report: TextReport | null = null;
+
+let channel: BroadcastChannel | null = null;
+try {
+  if (typeof BroadcastChannel !== 'undefined') {
+    channel = new BroadcastChannel('aassistant_ui');
+    channel.onmessage = (event) => {
+      if (event.data?.type === 'UI_STATUS') {
+        remoteUIBusy = !!event.data.busy;
+      }
+    };
+  }
+} catch {
+  // BroadcastChannel might not be supported in some environments
+}
+
+export function isUIBusy(): boolean {
+  return localUIHolds > 0 || remoteUIBusy;
+}
+
+export function holdUI(): () => void {
+  localUIHolds++;
+  if (localUIHolds === 1 && channel) {
+    channel.postMessage({ type: 'UI_STATUS', busy: true });
+  }
+  publish();
+  let released = false;
+  return () => {
+    if (!released) {
+      released = true;
+      localUIHolds = Math.max(0, localUIHolds - 1);
+      if (localUIHolds === 0 && channel) {
+        channel.postMessage({ type: 'UI_STATUS', busy: false });
+      }
+      publish();
+    }
+  };
+}
+
 const store = writable<LedgerView>({ ...data, persisted: persisted && preferencesPersisted, issues, generation, editing: false, result: getText() });
 export const appState = { subscribe: store.subscribe };
 export const notices = writable<Notice[]>([]);
@@ -48,7 +76,7 @@ export function onMemberChange(listener: (change: MemberChange, members: string[
 }
 
 function publish(memberChange?: MemberChange) {
-  const state = { ...data, persisted: persisted && preferencesPersisted, issues, generation, editing: session?.owner === 'user', result: getText() };
+  const state = { ...data, persisted: persisted && preferencesPersisted, issues, generation, editing: isUIBusy(), result: getText() };
   store.set(state);
   // Subscribers process every committed operation before Svelte batches DOM updates.
   if (memberChange) for (const listener of memberListeners) {
@@ -60,14 +88,6 @@ export function initializeLedger(): void {
   readSavedPreferences();
   readSavedLedger();
   window.addEventListener('storage', handleStorage);
-  window.addEventListener('blur', endUserEditing);
-  window.addEventListener('pagehide', releaseEdit);
-}
-
-function endUserEditing() {
-  if (session?.owner !== 'user' && !userRequest) return;
-  // Blur handlers retain their own hold until pending saves finish.
-  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 }
 
 function readSavedLedger() {
@@ -99,53 +119,14 @@ function readSavedPreferences() {
 }
 
 function handleStorage(event: StorageEvent) {
-  if (session || acquiring) return;
+  if (isUIBusy()) return;
   if (event.key === PREFERENCES_KEY || event.key === null) readSavedPreferences();
   if (event.key === STORAGE_KEY || event.key === null) readSavedLedger();
 }
 
-/** The read and write share one transaction, so competing tabs cannot both win. */
-function changeEditLock(update: (current: EditSession | undefined) => EditSession | undefined): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const open = indexedDB.open('aassistant_edit', 1);
-    open.onupgradeneeded = () => open.result.createObjectStore('lock');
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const db = open.result;
-      const transaction = db.transaction('lock', 'readwrite');
-      const store = transaction.objectStore('lock');
-      let failure: unknown;
-      transaction.oncomplete = () => { db.close(); resolve(); };
-      transaction.onabort = () => { db.close(); reject(failure ?? transaction.error); };
-      const read = store.get('ledger');
-      read.onsuccess = () => {
-        try {
-          const next = update(read.result);
-          if (next) store.put(next, 'ledger');
-          else store.delete('ledger');
-        } catch (error) { failure = error; transaction.abort(); }
-      };
-    };
-  });
-}
-
-function releaseEdit() {
-  userHolds.clear();
-  const current = session;
-  if (!current) return;
-  session = null;
-  clearInterval(heartbeat);
-  released = changeEditLock((lock) => lock?.id === current.id ? undefined : lock)
-    .catch(() => { /* The lease still expires if storage becomes unavailable. */ });
-  publish();
-}
-
 if (import.meta.hot) import.meta.hot.dispose(() => {
-  disposed = true;
   window.removeEventListener('storage', handleStorage);
-  window.removeEventListener('blur', endUserEditing);
-  window.removeEventListener('pagehide', releaseEdit);
-  releaseEdit();
+  channel?.close();
 });
 
 function apiFailure(error: unknown, fallback: ApiError['code'] = 'INVALID_ARGUMENT'): { ok: false; error: ApiError } {
@@ -153,107 +134,23 @@ function apiFailure(error: unknown, fallback: ApiError['code'] = 'INVALID_ARGUME
 }
 
 function request(value: unknown, keys: string[]): Record<string, unknown> {
-  const input = object(value);
-  checkKeys(input, ['sessionId', ...keys], 'request');
-  if (!session || typeof input.sessionId !== 'string' || input.sessionId !== session.id) {
-    throw new InputError({ code: 'EDIT_REQUIRED', message: 'This edit session is missing or has ended. Begin a new edit session and read its ledger before writing.' });
+  if (isUIBusy()) {
+    throw new InputError({ code: 'EDIT_BUSY', message: 'The ledger is being edited. Retry after the current interaction finishes.' });
   }
-  if (session.expires <= Date.now()) {
-    releaseEdit();
-    throw new InputError({ code: 'EDIT_REQUIRED', message: 'This edit session has expired. Begin editing again before writing.' });
-  }
+  const input = object(value ?? {});
+  // Allow optional sessionId for backwards compatibility if callers still pass it
+  const allowed = 'sessionId' in input ? [...keys, 'sessionId'] : keys;
+  checkKeys(input, allowed, 'request');
   return input;
 }
 
-async function renewEdit() {
-  const current = session;
-  if (!current) return;
-  try {
-    let expires = current.expires;
-    await changeEditLock((lock) => {
-      const now = Date.now();
-      if (session !== current || lock?.id !== current.id || lock.expires <= now || current.expires <= now) {
-        throw new InputError({ code: 'EDIT_REQUIRED', message: 'This edit session has expired. Begin editing again before writing.' });
-      }
-      expires = now + LOCK_TIMEOUT;
-      return { ...current, expires };
-    });
-    if (session === current) current.expires = expires;
-  } catch (error) {
-    if (session !== current) return;
-    const failure = apiFailure(error, 'SAVE_FAILED');
-    releaseEdit();
-    if (current.owner === 'user') showEditError(failure.error);
-  }
-}
-
-async function beginEditing(owner: Editor): Promise<ApiResult<{ sessionId: string; ledger: LedgerSnapshot }>> {
-  if (session || acquiring || disposed) return apiFailure(new InputError({ code: 'EDIT_BUSY', message: 'The ledger is being edited. Retry after the current editor finishes.' }));
-  acquiring = true;
-  try {
-    await released;
-    const current = { id: Array.from(crypto.getRandomValues(new Uint32Array(4)), (part) => part.toString(16)).join('-'), owner, expires: 0 };
-    await changeEditLock((lock) => {
-      const now = Date.now();
-      if (lock && lock.expires > now) throw new InputError({ code: 'EDIT_BUSY', message: 'Another page is editing this ledger. Retry after it finishes.' });
-      current.expires = now + LOCK_TIMEOUT;
-      return current;
-    });
-    session = current;
-    if (disposed) {
-      releaseEdit();
-      throw new InputError({ code: 'EDIT_REQUIRED', message: 'This page has ended its edit session.' });
-    }
-    readSavedPreferences();
-    readSavedLedger();
-    publish();
-    heartbeat = setInterval(() => { void renewEdit(); }, LOCK_TIMEOUT / 3);
-    return { ok: true, sessionId: current.id, ledger: aassistant.getLedger() };
-  } catch (error) {
-    return apiFailure(error, 'SAVE_FAILED');
-  } finally { acquiring = false; }
-}
-
-export function holdUserEdit(): UserHold {
-  const claim = Symbol();
-  userHolds.add(claim);
-  const release = () => {
-    userHolds.delete(claim);
-    if (!userHolds.size && session?.owner === 'user') releaseEdit();
-  };
-  const pending = session?.owner === 'user' ? Promise.resolve({ ok: true } as const)
-    : userRequest ?? (userRequest = beginEditing('user').finally(() => { userRequest = null; }));
-  return {
-    ready: pending.then((result) => {
-      if (!result.ok || !userHolds.has(claim)) release();
-      return result;
-    }),
-    release
-  };
-}
-
-function showNotice(notice: Notice): void {
+export function showNotice(notice: Notice): void {
   notices.update((pending) => pending.includes(notice) ? pending : [...pending, notice]);
 }
 
 export function showEditError(error: ApiError): void {
   if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   showNotice(error.code === 'SAVE_FAILED' ? 'storage_save_failed' : 'editing_busy');
-}
-
-export function runUserEdit(action: () => void): void {
-  const hold = holdUserEdit();
-  const run = () => { try { action(); } finally { hold.release(); } };
-  if (session?.owner === 'user') run();
-  else void hold.ready.then((result) => {
-    if (result.ok) run();
-    else showEditError(result.error);
-  });
-}
-
-export function editFromUI<P extends EditRequest, R>(action: (input: P) => R, input: Omit<P, 'sessionId'>): R | { ok: false; error: ApiError } {
-  if (session?.owner !== 'user') return apiFailure(new InputError({ code: 'EDIT_REQUIRED', message: 'This input or drag no longer owns the edit lock.' }));
-  return action({ ...input, sessionId: session.id } as P);
 }
 
 function settlementChanged(next: Ledger): boolean {
@@ -341,40 +238,32 @@ function getText(): ApiResult<TextReport> {
 }
 
 export const aassistant = Object.freeze({
-  apiVersion: 2,
-
-  beginEdit: () => beginEditing('agent'),
-
-  async endEdit(input: EditRequest): Promise<ApiResult<{ persisted: boolean }>> {
-    try {
-      request(input, []);
-      releaseEdit();
-      await released;
-      return { ok: true, persisted: persisted && preferencesPersisted };
-    } catch (error) {
-      return apiFailure(error);
-    }
+  beginEdit: () => {
+    if (isUIBusy()) return apiFailure(new InputError({ code: 'EDIT_BUSY', message: 'The ledger is being edited. Retry after the user finishes interacting.' }));
+    return { ok: true, ledger: aassistant.getLedger() };
   },
+
+  endEdit: () => ({ ok: true, persisted: persisted && preferencesPersisted }),
 
   getLedger(): LedgerSnapshot {
     return structuredClone({ ...data, persisted: persisted && preferencesPersisted, issues });
   },
 
-  setLedger(input: EditRequest & { name: string; members: string[]; bills: Array<BillInput & { id: number }> }): MutationResult {
+  setLedger(input: { name: string; members: string[]; bills: Array<BillInput & { id: number }> }): MutationResult {
     return change(input, ['name', 'members', 'bills'], (value) => ({
       ...data, name: value.name as string,
       members: value.members as string[], bills: value.bills as Bill[]
     }), 'reset');
   },
 
-  renameLedger(input: EditRequest & { name: string }): MutationResult {
+  renameLedger(input: { name: string }): MutationResult {
     return change(input, ['name'], (value) => {
       if (typeof value.name !== 'string') invalid('name', 'string');
       return { ...data, name: value.name };
     });
   },
 
-  addMember(input: EditRequest & { name: string }): MutationResult {
+  addMember(input: { name: string }): MutationResult {
     return change(input, ['name'], (value) => {
       const name = memberName(value.name, 'name');
       if (data.members.includes(name)) return data;
@@ -385,7 +274,7 @@ export const aassistant = Object.freeze({
     }, 'add');
   },
 
-  renameMember(input: EditRequest & { name: string; newName: string }): MutationResult {
+  renameMember(input: { name: string; newName: string }): MutationResult {
     return change(input, ['name', 'newName'], (value) => {
       const name = findMember(value.name);
       const newName = memberName(value.newName, 'newName');
@@ -404,7 +293,7 @@ export const aassistant = Object.freeze({
     }, 'rename');
   },
 
-  removeMember(input: EditRequest & { name: string }): MutationResult {
+  removeMember(input: { name: string }): MutationResult {
     return change(input, ['name'], (value) => {
       const name = findMember(value.name);
       return {
@@ -422,7 +311,7 @@ export const aassistant = Object.freeze({
     }, 'remove');
   },
 
-  moveMember(input: EditRequest & { name: string; beforeName: string | null }): MutationResult {
+  moveMember(input: { name: string; beforeName: string | null }): MutationResult {
     return change(input, ['name', 'beforeName'], (value) => {
       const name = findMember(value.name);
       const before = value.beforeName === null ? null : findMember(value.beforeName);
@@ -433,7 +322,7 @@ export const aassistant = Object.freeze({
     }, 'move');
   },
 
-  addBill(input: EditRequest & { bill: BillInput }): ApiResult<MutationReceipt & { billId: number }> {
+  addBill(input: { bill: BillInput }): ApiResult<MutationReceipt & { billId: number }> {
     const result = change(input, ['bill'], (value) => {
       const bill = object(value.bill, 'bill');
       if ('id' in bill) invalid('bill.id', 'bill_id_assigned');
@@ -448,7 +337,7 @@ export const aassistant = Object.freeze({
     return { ...result, billId: id };
   },
 
-  updateBill(input: EditRequest & { id: number; changes: Partial<Omit<Bill, 'id'>> }): MutationResult {
+  updateBill(input: { id: number; changes: Partial<Omit<Bill, 'id'>> }): MutationResult {
     return change(input, ['id', 'changes'], (value) => {
       const bill = findBill(value.id);
       const raw = object(value.changes, 'changes');
@@ -459,14 +348,14 @@ export const aassistant = Object.freeze({
     });
   },
 
-  removeBill(input: EditRequest & { id: number }): MutationResult {
+  removeBill(input: { id: number }): MutationResult {
     return change(input, ['id'], (value) => {
       const bill = findBill(value.id);
       return { ...data, bills: data.bills.filter((item) => item.id !== bill.id) };
     });
   },
 
-  moveBill(input: EditRequest & { id: number; beforeId: number | null }): MutationResult {
+  moveBill(input: { id: number; beforeId: number | null }): MutationResult {
     return change(input, ['id', 'beforeId'], (value) => {
       const bill = findBill(value.id);
       const before = value.beforeId === null ? null : findBill(value.beforeId);
@@ -478,15 +367,15 @@ export const aassistant = Object.freeze({
     });
   },
 
-  clearLedger(input: EditRequest): MutationResult {
-    return change(input, [], () => ({ ...data, name: t(data.currentLang, 'untitled_ledger'), members: [], bills: [] }), 'reset');
+  clearLedger(input?: Record<string, never>): MutationResult {
+    return change(input ?? {}, [], () => ({ ...data, name: t(data.currentLang, 'untitled_ledger'), members: [], bills: [] }), 'reset');
   },
 
-  loadDemo(input: EditRequest): MutationResult {
-    return change(input, [], () => ({ ...data, ...getDemoData(data.currentLang) }), 'reset');
+  loadDemo(input?: Record<string, never>): MutationResult {
+    return change(input ?? {}, [], () => ({ ...data, ...getDemoData(data.currentLang) }), 'reset');
   },
 
-  setPreferences(input: EditRequest & { currentLang?: Lang; currentTheme?: Theme }): MutationResult {
+  setPreferences(input: { currentLang?: Lang; currentTheme?: Theme }): MutationResult {
     try {
       const value = request(input, ['currentLang', 'currentTheme']);
       if (value.currentLang !== undefined && value.currentLang !== 'en' && value.currentLang !== 'zh') invalid('currentLang', 'language');
