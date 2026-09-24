@@ -1,57 +1,32 @@
 import type { Lang, Theme } from './types';
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-let textMeasurer: HTMLSpanElement | null = null;
+/** One extended grapheme is one visible editing unit, including ZWJ emoji. */
+export function graphemes(text: string): string[] {
+  return Array.from(segmenter.segment(text), ({ segment }) => segment);
+}
 
-export function getTextWidth(text: string): number {
-  if (typeof document === 'undefined') {
-    return text.length * 12;
+/** Western characters count as half; every other grapheme counts as one. */
+export function limitTextLength(text: string, maximum: number): string {
+  let length = 0;
+  let end = 0;
+  for (const { segment: character } of segmenter.segment(text)) {
+    length += /^[\u0000-\u00ff\p{Script=Latin}]\p{Mark}*$/u.test(character) ? .5 : 1;
+    if (length > maximum) break;
+    end += character.length;
   }
-  if (!textMeasurer) {
-    textMeasurer = document.createElement('span');
-    textMeasurer.style.cssText =
-      'position:absolute;visibility:hidden;white-space:nowrap;font-family:var(--font-main);font-size:1.1rem;';
-    document.body.appendChild(textMeasurer);
-  }
-  textMeasurer.textContent = text;
-  return textMeasurer.offsetWidth + 4;
+  return text.slice(0, end);
 }
 
 export function detectSystemLanguage(): Lang {
-  const lang = navigator.language || (navigator as unknown as { userLanguage?: string }).userLanguage || 'en';
-  const lower = lang.toLowerCase();
-  if (
-    lower.startsWith('zh') ||
-    lower === 'zh-cn' ||
-    lower === 'zh-tw' ||
-    lower === 'zh-hk' ||
-    lower === 'zh-mo'
-  ) {
-    return 'zh';
-  }
-  return 'en';
+  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
 }
 
 export function detectSystemTheme(): Theme {
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    return 'dark';
-  }
-  return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
-export function isMobileDevice(): boolean {
-  return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-}
-
-export function formatNumberDisplay(num: number): string {
-  const str = num.toFixed(2);
-  if (str.length > 7) {
-    return `${str.substring(0, 7)}…`;
-  }
-  return str;
-}
-
-export function getCurrentTimeFormatted(): string {
-  const now = new Date();
+export function getCurrentTimeFormatted(now = new Date()): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
