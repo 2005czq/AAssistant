@@ -1,233 +1,148 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { Bill, BillType, Lang, Theme } from './lib/types';
+  import { onDestroy } from 'svelte';
   import { t } from './lib/i18n';
-  import { detectSystemLanguage, detectSystemTheme } from './lib/utils';
-  import { calculateTransfers, hasBillErrors } from './lib/calculations';
-  import { clearState, loadState, saveState } from './lib/storage';
-  import { getDemoData } from './lib/demo';
-  import { GITHUB_URL } from './lib/constants';
-
+  import { aassistant, appState, editFromUI, holdUserEdit, notices, runUserEdit, showEditError } from './lib/api';
+  import { applyTheme } from './lib/theme';
+  import { MIN_MEMBERS } from './lib/constants';
   import Header from './components/Header.svelte';
+  import LedgerHeader from './components/LedgerHeader.svelte';
+  import Paper from './components/Paper.svelte';
   import MembersSection from './components/MembersSection.svelte';
   import BillsSection from './components/BillsSection.svelte';
   import ResultSection from './components/ResultSection.svelte';
-  import ConfirmModal from './components/ConfirmModal.svelte';
-  import DetailsModal from './components/DetailsModal.svelte';
+  import Modal from './components/Modal.svelte';
+  import BookOpen from 'lucide-svelte/icons/book-open';
+  import Eraser from 'lucide-svelte/icons/eraser';
+  import Info from 'lucide-svelte/icons/info';
 
-  let currentLang: Lang = 'en';
-  let currentTheme: Theme = 'light';
-  let members: string[] = [];
-  let bills: Bill[] = [];
+  let editModeHold: ReturnType<typeof holdUserEdit> | null = null;
   let isEditMode = false;
+  let lastGeneration = 0;
+  let confirmationAction: 'demo' | 'clear' = 'clear';
+  let confirmationOpen = false;
+  let confirmationHold: ReturnType<typeof holdUserEdit> | null = null;
+  let members = $appState.members;
+  let bills = $appState.bills;
 
-  let showClearModal = false;
-  let showDetailsModal = false;
-
-  const MAX_MEMBER_NAME_LENGTH = 8;
-
-  const supportedBillTypes: BillType[] = ['AA', 'Join', 'Remove', 'Distribution', 'Ratio'];
-
-  function normalizeBill(raw: Partial<Bill>): Bill {
-    const type = supportedBillTypes.includes(raw.type as BillType) ? (raw.type as BillType) : 'AA';
-    const distribution =
-      raw.distribution && typeof raw.distribution === 'object' && !Array.isArray(raw.distribution)
-        ? raw.distribution
-        : {};
-    const ratios =
-      raw.ratios && typeof raw.ratios === 'object' && !Array.isArray(raw.ratios) ? raw.ratios : {};
-    return {
-      id: typeof raw.id === 'number' ? raw.id : Date.now(),
-      payer: raw.payer ?? '',
-      reason: raw.reason ?? '-',
-      type,
-      amount: typeof raw.amount === 'number' ? raw.amount : 0,
-      involved: Array.isArray(raw.involved) ? raw.involved : [],
-      distribution,
-      ratios
-    };
-  }
-
-  function persist() {
-    saveState({ members, bills, currentLang, currentTheme });
-  }
-
-  function applyTheme() {
-    if (typeof document !== 'undefined') {
-      document.body.setAttribute('data-theme', currentTheme);
+  async function requestAction(action: 'demo' | 'clear') {
+    if (confirmationHold) return;
+    const hold = confirmationHold = holdUserEdit();
+    const result = await hold.ready;
+    if (confirmationHold !== hold) return;
+    if (!result.ok) { closeConfirmation(); showEditError(result.error); return; }
+    const current = aassistant.getLedger();
+    const unnamed = !current.name.trim() || [t('en', 'untitled_ledger'), t('zh', 'untitled_ledger')].includes(current.name.trim());
+    if (action === 'clear' && !current.members.length && !current.bills.length && unnamed) { closeConfirmation(); return; }
+    if (action === 'demo' && !current.members.length && !current.bills.length && unnamed) {
+      editFromUI(aassistant.loadDemo, {});
+      closeConfirmation();
+      return;
     }
+    confirmationAction = action;
+    confirmationOpen = true;
   }
 
-  function applyTitle() {
-    if (typeof document !== 'undefined') {
-      document.title = t(currentLang, 'page_title');
+  function confirmAction() {
+    if (!confirmationOpen) return;
+    if (confirmationAction === 'clear') editFromUI(aassistant.clearLedger, {});
+    else editFromUI(aassistant.loadDemo, {});
+    closeConfirmation();
+  }
+
+  function closeConfirmation() {
+    confirmationOpen = false;
+    confirmationHold?.release();
+    confirmationHold = null;
+  }
+
+  async function toggleEditMode() {
+    if (editModeHold) { closeUserEditing(); return; }
+    const hold = editModeHold = holdUserEdit();
+    const result = await hold.ready;
+    if (editModeHold !== hold) return;
+    if (!result.ok) { closeUserEditing(); showEditError(result.error); return; }
+    isEditMode = true;
+  }
+
+  function closeUserEditing() {
+    if (editModeHold) {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      editModeHold.release();
+      editModeHold = null;
     }
+    isEditMode = false;
+    closeConfirmation();
   }
 
-  function addMember(name: string) {
-    let trimmed = name.trim();
-    if (!trimmed || members.includes(trimmed)) return;
-    if (trimmed.length > MAX_MEMBER_NAME_LENGTH) {
-      trimmed = trimmed.substring(0, MAX_MEMBER_NAME_LENGTH);
-    }
-    if (members.includes(trimmed)) return;
-    members = [...members, trimmed];
-    persist();
+  onDestroy(closeUserEditing);
+
+  $: if ((isEditMode && !$appState.editing) || (confirmationOpen && !$appState.editing) || $appState.generation !== lastGeneration) {
+    closeUserEditing();
+    lastGeneration = $appState.generation;
   }
-
-  function removeMember(name: string) {
-    members = members.filter((m) => m !== name);
-    bills = bills.map((bill) => {
-      const updated: Bill = {
-        ...bill,
-        involved: bill.involved.filter((m) => m !== name),
-        distribution: { ...bill.distribution },
-        ratios: { ...bill.ratios }
-      };
-      if (updated.payer === name) updated.payer = '';
-      if (updated.distribution[name] !== undefined) delete updated.distribution[name];
-      if (updated.ratios[name] !== undefined) delete updated.ratios[name];
-      return updated;
-    });
-    persist();
-  }
-
-  function renameMember(oldName: string, newName: string) {
-    const trimmed = newName.trim();
-    if (!trimmed || trimmed === oldName) return;
-    if (members.includes(trimmed)) return;
-
-    members = members.map((m) => (m === oldName ? trimmed : m));
-    bills = bills.map((bill) => {
-      const updated: Bill = {
-        ...bill,
-        involved: bill.involved.map((m) => (m === oldName ? trimmed : m)),
-        distribution: { ...bill.distribution },
-        ratios: { ...bill.ratios }
-      };
-      if (updated.payer === oldName) updated.payer = trimmed;
-      if (updated.distribution[oldName] !== undefined) {
-        updated.distribution[trimmed] = updated.distribution[oldName];
-        delete updated.distribution[oldName];
-      }
-      if (updated.ratios[oldName] !== undefined) {
-        updated.ratios[trimmed] = updated.ratios[oldName];
-        delete updated.ratios[oldName];
-      }
-      return updated;
-    });
-    persist();
-  }
-
-  function setBills(nextBills: Bill[]) {
-    bills = nextBills.map((bill) => normalizeBill(bill));
-    persist();
-  }
-
-  function toggleTheme() {
-    currentTheme = currentTheme === 'light' ? 'dark' : 'light';
-    applyTheme();
-    persist();
-  }
-
-  function toggleLang() {
-    currentLang = currentLang === 'en' ? 'zh' : 'en';
-    applyTitle();
-    persist();
-  }
-
-  function toggleEditMode() {
-    isEditMode = !isEditMode;
-  }
-
-  function openGithub() {
-    window.open(GITHUB_URL, '_blank');
-  }
-
-  function loadDemo() {
-    const demo = getDemoData(currentLang);
-    members = demo.members;
-    bills = demo.bills;
-    persist();
-  }
-
-  function clearAll() {
-    members = [];
-    bills = [];
-    clearState();
-    showClearModal = false;
-  }
-
-  onMount(() => {
-    const stored = loadState();
-    if (stored) {
-      members = stored.members ?? [];
-      bills = (stored.bills ?? []).map((bill) => normalizeBill(bill));
-      const storedLang = stored.currentLang;
-      const storedTheme = stored.currentTheme;
-      currentLang = storedLang === 'en' || storedLang === 'zh' ? storedLang : detectSystemLanguage();
-      currentTheme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : detectSystemTheme();
-    } else {
-      currentLang = detectSystemLanguage();
-      currentTheme = detectSystemTheme();
-    }
-    applyTheme();
-    applyTitle();
-  });
-
-  $: currentTheme, applyTheme();
-  $: currentLang, applyTitle();
-
-  $: hasErrors = hasBillErrors(members, bills);
-  $: transfers = calculateTransfers(members, bills);
+  $: applyTheme($appState.currentTheme);
+  $: document.documentElement.lang = $appState.currentLang;
+  // Svelte 4 dirties object props even when equal; forward collections only when replaced.
+  $: if (members !== $appState.members) members = $appState.members;
+  $: if (bills !== $appState.bills) bills = $appState.bills;
+  $: hasMembers = members.length > 0;
 </script>
 
-<div class="paper">
+<svelte:head>
+  <title>{t($appState.currentLang, 'page_title')}</title>
+  <meta name="description" content={t($appState.currentLang, 'page_description')} />
+</svelte:head>
+<svelte:window on:blur={closeUserEditing} />
+
+<div class="workspace">
   <Header
-    lang={currentLang}
-    theme={currentTheme}
-    isEditMode={isEditMode}
-    onToggleLang={toggleLang}
-    onToggleTheme={toggleTheme}
-    onDemo={loadDemo}
-    onClear={() => (showClearModal = true)}
-    onToggleEdit={toggleEditMode}
-    onGithub={openGithub}
+    lang={$appState.currentLang}
+    theme={$appState.currentTheme}
+    onDemo={() => requestAction('demo')}
+    onToggleLang={() => runUserEdit(() => { editFromUI(aassistant.setPreferences, {
+      currentLang: $appState.currentLang === 'en' ? 'zh' : 'en'
+    }); })}
+    onToggleTheme={() => runUserEdit(() => { editFromUI(aassistant.setPreferences, {
+      currentTheme: $appState.currentTheme === 'light' ? 'dark' : 'light'
+    }); })}
   />
 
-  <main>
-    <MembersSection
-      lang={currentLang}
-      {members}
-      onAddMember={addMember}
-      onRemoveMember={removeMember}
-      onRenameMember={renameMember}
-    />
-
-    <BillsSection lang={currentLang} {members} {bills} {isEditMode} onSetBills={setBills} />
-
-    <ResultSection
-      lang={currentLang}
-      hasErrors={hasErrors}
-      transfers={transfers}
-      billsCount={bills.length}
-      showDetails={!hasErrors}
-      onDetails={() => (showDetailsModal = true)}
-    />
+  <main class="paper-stack">
+    <Paper label={t($appState.currentLang, 'bills_title')}>
+      {#key $appState.generation}
+        <LedgerHeader lang={$appState.currentLang} name={$appState.name}
+          {hasMembers} hasBills={bills.length > 0} {isEditMode}
+          onToggleEdit={toggleEditMode}
+          onRename={(name) => runUserEdit(() => { editFromUI(aassistant.renameLedger, { name }); })}
+          onClear={() => requestAction('clear')} />
+        <MembersSection lang={$appState.currentLang} {members}
+          {isEditMode} />
+        <BillsSection
+          visible={members.length >= MIN_MEMBERS}
+          lang={$appState.currentLang} {members} {bills}
+          {isEditMode}
+        />
+      {/key}
+    </Paper>
+    <Paper label={t($appState.currentLang, 'result_title')}>
+      <ResultSection
+        lang={$appState.currentLang}
+        result={$appState.result}
+      />
+    </Paper>
   </main>
 </div>
 
-<ConfirmModal
-  open={showClearModal}
-  lang={currentLang}
-  onConfirm={clearAll}
-  onClose={() => (showClearModal = false)}
-/>
+<Modal open={confirmationOpen} lang={$appState.currentLang}
+  title={t($appState.currentLang, confirmationAction === 'clear' ? 'confirm_clear_title' : 'demo_title')}
+  confirmId={`confirm-${confirmationAction}-btn`} onConfirm={confirmAction} onClose={closeConfirmation}>
+  <svelte:component this={confirmationAction === 'clear' ? Eraser : BookOpen} slot="title-icon" size={22} aria-hidden="true" />
+  <p>{t($appState.currentLang, confirmationAction === 'clear' ? 'confirm_clear_body' : 'demo_body')}</p>
+</Modal>
 
-<DetailsModal
-  open={showDetailsModal}
-  lang={currentLang}
-  {members}
-  {bills}
-  onClose={() => (showDetailsModal = false)}
-/>
+<Modal open={$notices.length > 0} lang={$appState.currentLang}
+  title={t($appState.currentLang, 'notice_title')} showCancel={false}
+  onConfirm={() => notices.update((pending) => pending.slice(1))} onClose={() => notices.update((pending) => pending.slice(1))}>
+  <Info slot="title-icon" size={22} aria-hidden="true" />
+  <p>{t($appState.currentLang, $notices[0] ?? '')}</p>
+</Modal>
